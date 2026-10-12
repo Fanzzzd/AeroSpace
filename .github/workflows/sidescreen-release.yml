@@ -1,0 +1,82 @@
+# Keeps the sidescreen branch on top of the latest upstream release and publishes a notarized build of it.
+# The steps live in .github/sidescreen/ and run locally too. See SIDESCREEN.md.
+#
+# Variables:
+# - CODESIGN_IDENTITY: name of the Developer ID Application certificate
+# - APPLE_API_KEY_ID, APPLE_API_ISSUER_ID: App Store Connect API key for notarytool
+# Secrets:
+# - SIDESCREEN_DEPLOY_KEY: write deploy key of this repository. GITHUB_TOKEN can't push commits that change
+#   .github/workflows, and upstream releases often do.
+# - DEVELOPER_ID_P12_BASE64, DEVELOPER_ID_P12_PASSWORD: the Developer ID Application certificate and its key
+# - APPLE_API_KEY_P8_BASE64: private key of the App Store Connect API key
+name: sidescreen-release
+
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Mondays at 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency: sidescreen-release
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  CODESIGN_IDENTITY: ${{ vars.CODESIGN_IDENTITY }}
+  GIT_COMMITTER_NAME: github-actions[bot]
+  GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+
+jobs:
+  release:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: sidescreen
+          fetch-depth: 0
+          ssh-key: ${{ secrets.SIDESCREEN_DEPLOY_KEY }}
+
+      - name: Rebase onto the latest upstream release
+        id: sync
+        run: .github/sidescreen/sync.sh
+
+      - name: Install the toolchain
+        run: |
+          ./.github/gh-actions-runner-xcode-select.sh
+          brew update && brew install bash fish xcbeautify swiftly
+          swiftly init --skip-install --assume-yes && swiftly install
+
+      - name: Build and test
+        run: ./build-debug.sh && ./test.sh
+
+      - name: Push the rebased branch
+        if: steps.sync.outputs.rebased == 'true'
+        run: git push --force-with-lease origin HEAD:sidescreen
+
+      - name: Import the Developer ID certificate
+        if: steps.sync.outputs.released == 'false'
+        env:
+          DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          DEVELOPER_ID_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+        run: .github/sidescreen/keychain.sh import
+
+      - name: Build, notarize and publish
+        if: steps.sync.outputs.released == 'false'
+        env:
+          APPLE_API_KEY_ID: ${{ vars.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ vars.APPLE_API_ISSUER_ID }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          TAG: ${{ steps.sync.outputs.latest }}
+        run: .github/sidescreen/release.sh "$TAG"
+
+      - name: Delete the signing keychain
+        if: always()
+        run: .github/sidescreen/keychain.sh delete
+
+      - name: Report the failure
+        if: failure()
+        env:
+          TAG: ${{ steps.sync.outputs.latest }}
+        run: .github/sidescreen/report-failure.sh "$TAG"
