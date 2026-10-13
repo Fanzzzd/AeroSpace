@@ -157,7 +157,7 @@ final class MacApp: AbstractApp {
             let missing = request.missing(from: current, lastAnswer: window.frameAnswer)
             if missing.isEmpty { return }
             try disableAnimations(app: axApp.threadGuarded, job) {
-                try write(missing, of: request, to: window.ax, current: current, job)
+                try write(missing, of: request, to: window.ax, job)
             }
             guard let got = try AppBundle.getAxRect(window: window.ax, job: job) else { return }
             window.frameAnswer = FrameAnswer(asked: request, got: got)
@@ -442,16 +442,15 @@ private func setFrame(_ window: AXUIElement, _ topLeft: CGPoint?, _ size: CGSize
     if let size { window.set(Ax.sizeAttr, size) }
 }
 
-/// Writes the `missing` parts of `request`: the size first, then the position
+/// Writes the `missing` parts of `request`: the size, then the position, then the size again if the window doesn't
+/// have it. macOS keeps a resized window inside the screen at its old position, so the first size may come out short
 /// (https://github.com/nikitabobko/AeroSpace/issues/143, https://github.com/nikitabobko/AeroSpace/issues/335)
-private func write(_ missing: FrameRequest, of request: FrameRequest, to window: AXUIElement, current: Rect, _ job: RunLoopJob) throws {
+private func write(_ missing: FrameRequest, of request: FrameRequest, to window: AXUIElement, _ job: RunLoopJob) throws {
     if let size = missing.size { window.set(Ax.sizeAttr, size) }
     guard let topLeft = missing.topLeft else { return }
     try job.checkCancellation()
-    let sizeBeforeMove = missing.size == nil ? current.size : window.get(Ax.sizeAttr)
     window.set(Ax.topLeftCornerAttr, topLeft)
-    // macOS shrinks a window that it moves onto a smaller monitor
-    if let size = request.size, let sizeBeforeMove, let sizeAfterMove = window.get(Ax.sizeAttr), !sizeAfterMove.isNear(sizeBeforeMove) {
+    if let size = request.size, window.get(Ax.sizeAttr)?.isNear(size) != true {
         try job.checkCancellation()
         window.set(Ax.sizeAttr, size)
     }
