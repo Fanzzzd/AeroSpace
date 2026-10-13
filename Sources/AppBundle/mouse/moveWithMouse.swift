@@ -34,11 +34,10 @@ private func moveWithMouse(_ window: Window) async throws { // todo cover with t
             return // Unconventional windows can't be moved with mouse
         case .tilingContainer:
             if currentlyManipulatedWithMouseWindowId != window.windowId {
-                draggedWindowTile = window.lastAppliedLayoutPhysicalRect
+                mouseManipulation = MouseManipulation(windowId: window.windowId, tile: window.lastAppliedLayoutPhysicalRect)
             }
-            currentlyManipulatedWithMouseWindowId = window.windowId
             window.lastAppliedLayoutPhysicalRect = nil
-            guard let rect = try await window.getAxRect(.cancellable), let tile = draggedWindowTile else { return }
+            guard let rect = try await window.getAxRect(.cancellable), let tile = mouseManipulation?.tile else { return }
             moveTilingWindow(window, rect: rect, tile: tile)
         case .unbound: return
     }
@@ -54,46 +53,70 @@ private func moveFloatingWindow(_ window: Window) async throws {
 }
 
 /// Puts a tiling window that is being dragged where it is now, at `rect`, away from its `tile`:
-/// - On another monitor, next to the window under its center.
-/// - On its own monitor, in the place of the window whose tile's middle its leading edge has passed: the edge on the
-///   side it was dragged to. Next to that window, it keeps its size and the others make room, as in a list. A wide
-///   window and a narrow one swap after the same short distance either way
+/// - Onto another monitor: next to the window under its center.
+/// - Along its container: like an item in a list. The edge on the side it is dragged to leads; for each tile whose
+///   middle that edge has passed, the window moves one place, keeping its size while the others make room. An edge off
+///   the screen has passed them all.
+/// - Across its container, such as into the next column: in the place of the window there, once the leading edge has
+///   passed the middle of that window's tile
 @MainActor
 func moveTilingWindow(_ window: Window, rect: Rect, tile: Rect) {
     let center = rect.center
     let targetWorkspace = center.monitorApproximation.activeWorkspace
     if targetWorkspace != window.nodeWorkspace {
-        let target = center
-            .findWindowRecursively(in: targetWorkspace.rootTilingContainer, virtual: false, fullscreenCoversAll: false)
-        let index: Int = if let target, let parent = target.parent as? TilingContainer, let targetRect = target.lastAppliedLayoutPhysicalRect {
-            center.getProjection(parent.orientation) >= targetRect.center.getProjection(parent.orientation)
-                ? target.ownIndex.orDie() + 1
-                : target.ownIndex.orDie()
-        } else {
-            0
-        }
-        window.bind(to: target?.parent ?? targetWorkspace.rootTilingContainer, adaptiveWeight: WEIGHT_AUTO, index: index)
+        moveTilingWindow(window, to: targetWorkspace, center: center)
         return
     }
     let offset = center - tile.center
     let orientation: Orientation = abs(offset.x) >= abs(offset.y) ? .h : .v
     let forward = offset.getProjection(orientation) > 0
     if offset.getProjection(orientation) == 0 { return }
-    let edge = orientation == .h
-        ? CGPoint(x: forward ? rect.maxX - 1 : rect.minX, y: center.y)
-        : CGPoint(x: center.x, y: forward ? rect.maxY - 1 : rect.minY)
-    guard let target = edge.findWindowRecursively(in: targetWorkspace.rootTilingContainer, virtual: false, fullscreenCoversAll: false),
-          target != window,
-          let targetTile = target.lastAppliedLayoutPhysicalRect
-    else { return }
-    let middle = targetTile.center.getProjection(orientation)
-    if forward ? edge.getProjection(orientation) < middle : edge.getProjection(orientation) > middle { return }
-    if let parent = target.parent as? TilingContainer, parent == window.parent {
-        let index = target.ownIndex.orDie()
+    let leadingEdge = orientation == .h ? (forward ? rect.maxX : rect.minX) : (forward ? rect.maxY : rect.minY)
+    guard let parent = window.parent as? TilingContainer, let ownIndex = window.ownIndex else { return }
+
+    if parent.orientation == orientation && parent.layout == .tiles {
+        // Tiles along a container are in order, so are their middles
+        let middles = parent.children.map { $0.lastAppliedLayoutPhysicalRect?.center.getProjection(orientation) }
+        let passed = forward
+            ? middles[(ownIndex + 1)...].prefix { $0.map { leadingEdge >= $0 } ?? false }.count
+            : middles[..<ownIndex].reversed().prefix { $0.map { leadingEdge <= $0 } ?? false }.count
+        if passed == 0 { return }
         let binding = window.unbindFromParent()
-        window.bind(to: parent, adaptiveWeight: binding.adaptiveWeight, index: index)
+        window.bind(to: parent, adaptiveWeight: binding.adaptiveWeight, index: forward ? ownIndex + passed : ownIndex - passed)
+        return
+    }
+
+    // Kept on the monitor, so that an edge off the screen still finds the tile at the screen's edge
+    let monitor = targetWorkspace.workspaceMonitor.visibleRect
+    let probe = (orientation == .h
+        ? CGPoint(x: forward ? leadingEdge - 1 : leadingEdge, y: center.y)
+        : CGPoint(x: center.x, y: forward ? leadingEdge - 1 : leadingEdge))
+        .clamped(to: monitor)
+    guard let target = probe.findWindowRecursively(in: targetWorkspace.rootTilingContainer, virtual: false, fullscreenCoversAll: false),
+          target != window,
+          let middle = target.lastAppliedLayoutPhysicalRect?.center.getProjection(orientation),
+          forward ? leadingEdge >= middle : leadingEdge <= middle
+    else { return }
+    swapWindows(mruDominant: window, target)
+}
+
+/// Next to the window under `center` on the other monitor, on the side `center` is
+@MainActor
+private func moveTilingWindow(_ window: Window, to workspace: Workspace, center: CGPoint) {
+    let target = center.findWindowRecursively(in: workspace.rootTilingContainer, virtual: false, fullscreenCoversAll: false)
+    let index: Int = if let target, let parent = target.parent as? TilingContainer, let targetRect = target.lastAppliedLayoutPhysicalRect {
+        center.getProjection(parent.orientation) >= targetRect.center.getProjection(parent.orientation)
+            ? target.ownIndex.orDie() + 1
+            : target.ownIndex.orDie()
     } else {
-        swapWindows(mruDominant: window, target)
+        0
+    }
+    window.bind(to: target?.parent ?? workspace.rootTilingContainer, adaptiveWeight: WEIGHT_AUTO, index: index)
+}
+
+extension CGPoint {
+    fileprivate func clamped(to rect: Rect) -> CGPoint {
+        CGPoint(x: x.coerce(in: rect.minX ... rect.maxX - 1), y: y.coerce(in: rect.minY ... rect.maxY - 1))
     }
 }
 

@@ -42,7 +42,7 @@ extension TreeNode {
                         window.setAxFrame(point, CGSize(width: width, height: height))
                     }
                 } else {
-                    draggedWindowTile = physicalRect
+                    mouseManipulation?.tile = physicalRect
                 }
             case .tilingContainer(let container):
                 lastAppliedLayoutPhysicalRect = physicalRect

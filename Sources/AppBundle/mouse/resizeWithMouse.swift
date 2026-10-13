@@ -25,9 +25,8 @@ func resizedObs(_: AXObserver, ax: AXUIElement, notif: CFString, _: UnsafeMutabl
 
 @MainActor
 func resetManipulatedWithMouseIfPossible() async throws {
-    if currentlyManipulatedWithMouseWindowId != nil {
-        currentlyManipulatedWithMouseWindowId = nil
-        draggedWindowTile = nil
+    if mouseManipulation != nil {
+        mouseManipulation = nil
         for workspace in Workspace.all {
             workspace.resetResizeWeightBeforeResizeRecursive()
         }
@@ -76,7 +75,9 @@ private func resizeWithMouse(_ window: Window) async throws { // todo cover with
                     }
                 }
             }
-            currentlyManipulatedWithMouseWindowId = window.windowId
+            if currentlyManipulatedWithMouseWindowId != window.windowId {
+                mouseManipulation = MouseManipulation(windowId: window.windowId, tile: lastAppliedLayoutRect)
+            }
     }
 }
 

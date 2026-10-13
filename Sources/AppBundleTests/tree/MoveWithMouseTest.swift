@@ -56,4 +56,40 @@ final class MoveWithMouseTest: XCTestCase {
         moveTilingWindow(wide, rect: tile(620 - 80, 1300), tile: tile(620, 1300))
         assertEquals(root.layoutDescription, .h_tiles([.window(1), .window(2), .window(3), .window(5), .window(4)]))
     }
+
+    /// Four narrow windows, then a wide one
+    private func fourNarrowAndAWideOne() -> (TilingContainer, [Window]) {
+        let root = Workspace.get(byName: name).rootTilingContainer
+        var windows: [Window] = []
+        for i in 0 ..< 4 {
+            windows.append(TestWindow.new(id: UInt32(i + 1), parent: root, adaptiveWeight: 155))
+            windows[i].lastAppliedLayoutPhysicalRect = tile(CGFloat(i) * 155, 155)
+        }
+        windows.append(TestWindow.new(id: 5, parent: root, adaptiveWeight: 1300))
+        windows[4].lastAppliedLayoutPhysicalRect = tile(620, 1300)
+        assertEquals(windows[4].focusWindow(), true)
+        return (root, windows)
+    }
+
+    func testWideWindowDraggedOffTheLeftEdgeGoesFirst() {
+        let (root, windows) = fourNarrowAndAWideOne()
+        windows[4].lastAppliedLayoutPhysicalRect = nil
+        moveTilingWindow(windows[4], rect: tile(-200, 1300), tile: tile(620, 1300))
+        assertEquals(root.layoutDescription, .h_tiles([.window(5), .window(1), .window(2), .window(3), .window(4)]))
+    }
+
+    func testNarrowWindowDraggedOffTheRightEdgeGoesLast() {
+        let (root, windows) = fourNarrowAndAWideOne()
+        windows[0].lastAppliedLayoutPhysicalRect = nil
+        moveTilingWindow(windows[0], rect: tile(1800, 155), tile: tile(0, 155))
+        assertEquals(root.layoutDescription, .h_tiles([.window(2), .window(3), .window(4), .window(5), .window(1)]))
+    }
+
+    func testWindowMovesOnePlaceForEachMiddleItsEdgePasses() {
+        let (root, windows) = fourNarrowAndAWideOne()
+        windows[4].lastAppliedLayoutPhysicalRect = nil
+        // The left edge, at 300, is past the middles of tiles 3 and 4, at 387 and 542, not of tile 2, at 232
+        moveTilingWindow(windows[4], rect: tile(300, 1300), tile: tile(620, 1300))
+        assertEquals(root.layoutDescription, .h_tiles([.window(1), .window(2), .window(5), .window(3), .window(4)]))
+    }
 }
