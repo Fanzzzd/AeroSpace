@@ -52,7 +52,12 @@ final class Closet {
         // Virtual displays are at most 16384 pixels wide and high, and the closet is Retina
         let width = min(Int(size.width), 8192)
         let height = min(Int(size.height), 8192)
-        guard let (display, id) = Self.makeDisplay(width: width, height: height) else {
+        ClosetLog.startWatchdog()
+        ClosetLog.write("open: making a \(width)x\(height) closet; displays \(Self.describeDisplays()), load \(ClosetLog.loadAverage)")
+        let making = DispatchTime.now()
+        let made = Self.makeDisplay(width: width, height: height)
+        ClosetLog.write("open: made display \(made.map { "\($0.1)" } ?? "none") in \(ClosetLog.milliseconds(since: making)) ms")
+        guard let (display, id) = made else {
             MessageModel.shared.message = Message(
                 description: "Hiding windows",
                 body: "AeroSpace couldn't create its closet display, so windows of invisible workspaces stay on screen",
@@ -64,11 +69,12 @@ final class Closet {
         Self.id.withLock { $0 = id }
         place()
         label()
-        unsafe CGDisplayRegisterReconfigurationCallback({ _, flags, _ in
+        unsafe CGDisplayRegisterReconfigurationCallback({ display, flags, _ in
+            ClosetLog.write("reconfiguration: display \(display) \(Closet.describe(flags))")
             if flags.contains(.beginConfigurationFlag) { return }
             Task { @MainActor in
-                Closet.shared.place()
-                Closet.shared.label()
+                ClosetLog.timed("place") { Closet.shared.place() }
+                ClosetLog.timed("label") { Closet.shared.label() }
             }
         }, nil)
         pointerMonitor = NSEvent.addGlobalMonitorForEvents(
@@ -78,9 +84,6 @@ final class Closet {
         }
     }
 
-    /// Diagonally off the bottom-right corner of the other displays. macOS keeps every display touching another, so
-    /// it snaps the closet to that corner.
-    ///
     private var labeled = false
 
     /// A desktop picture that names the closet, so it's told apart from real monitors in System Settings, which lists
@@ -111,6 +114,7 @@ final class Closet {
                   .appendingPathComponent(aeroSpaceAppId, isDirectory: true)
         else { return }
         let url = folder.appendingPathComponent("closet.png")
+        let started = DispatchTime.now()
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             try png.write(to: url)
@@ -119,7 +123,10 @@ final class Closet {
                 .allowClipping: true,
             ])
             labeled = true
-        } catch {}
+            ClosetLog.write("label: set in \(ClosetLog.milliseconds(since: started)) ms")
+        } catch {
+            ClosetLog.write("label: failed after \(ClosetLog.milliseconds(since: started)) ms: \(error)")
+        }
     }
 
     /// Moving the closet is a display reconfiguration too, which calls ``place()`` again. A display WindowServer has
@@ -133,12 +140,58 @@ final class Closet {
         if bounds.minX == union.maxX && bounds.minY == union.maxY { return }
         let origin = CGPoint(x: union.maxX, y: union.maxY)
         let attempts = placement?.origin == origin ? placement?.attempts ?? 0 : 0
-        if attempts >= 3 { return }
+        if attempts >= 3 {
+            ClosetLog.write("place: closet at \(bounds.origin), target \(origin): gave up after 3 attempts")
+            return
+        }
+        // A safety net while the cause of the 2026-10-13 freeze is open: however place() is reached, it moves the
+        // closet at most 10 times a minute, then rests for 5 minutes
+        let now = Date()
+        recentMoves.removeAll { now.timeIntervalSince($0) > 60 }
+        if let restingUntil, now < restingUntil { return }
+        if recentMoves.count >= 10 {
+            restingUntil = now.addingTimeInterval(300)
+            ClosetLog.write("place: BREAKER: 10 moves within a minute, resting 5 minutes; displays \(Self.describeDisplays())")
+            return
+        }
+        recentMoves.append(now)
         placement = (origin, attempts + 1)
+        ClosetLog.write("place: closet at \(bounds.origin), target \(origin), attempt \(attempts + 1); displays \(Self.describeDisplays())")
+        let started = DispatchTime.now()
         var config: CGDisplayConfigRef? = nil
-        guard unsafe CGBeginDisplayConfiguration(&config) == .success else { return }
+        let began = unsafe CGBeginDisplayConfiguration(&config)
+        guard began == .success else {
+            ClosetLog.write("place: CGBeginDisplayConfiguration failed: \(began.rawValue)")
+            return
+        }
         unsafe CGConfigureDisplayOrigin(config, displayId, Int32(origin.x), Int32(origin.y))
-        unsafe CGCompleteDisplayConfiguration(config, .forSession)
+        let completed = unsafe CGCompleteDisplayConfiguration(config, .forSession)
+        ClosetLog.write(
+            "place: completed \(completed.rawValue) in \(ClosetLog.milliseconds(since: started)) ms; closet now at \(CGDisplayBounds(displayId).origin)",
+        )
+    }
+
+    private var recentMoves: [Date] = []
+    private var restingUntil: Date? = nil
+
+    /// Every active display, for the log: id, vendor and bounds
+    private static func describeDisplays() -> String {
+        var ids = [CGDirectDisplayID](repeating: 0, count: 32)
+        var count: UInt32 = 0
+        guard unsafe CGGetActiveDisplayList(UInt32(ids.count), &ids, &count) == .success else { return "?" }
+        return ids.prefix(Int(count)).map { d in
+            let b = CGDisplayBounds(d)
+            return "\(d)/\(String(CGDisplayVendorNumber(d), radix: 16))@\(Int(b.minX)),\(Int(b.minY)) \(Int(b.width))x\(Int(b.height))"
+        }.joined(separator: " ")
+    }
+
+    nonisolated static func describe(_ flags: CGDisplayChangeSummaryFlags) -> String {
+        let names: [(CGDisplayChangeSummaryFlags, String)] = [
+            (.beginConfigurationFlag, "begin"), (.movedFlag, "moved"), (.setMainFlag, "main"), (.setModeFlag, "mode"),
+            (.addFlag, "add"), (.removeFlag, "remove"), (.enabledFlag, "enabled"), (.disabledFlag, "disabled"),
+            (.mirrorFlag, "mirror"), (.unMirrorFlag, "unmirror"), (.desktopShapeChangedFlag, "shape"),
+        ]
+        return names.filter { flags.contains($0.0) }.map(\.1).joined(separator: ",")
     }
 
     /// Bounds of the active displays other than the closet. Mirrored displays share their source's bounds and aren't
@@ -157,6 +210,7 @@ final class Closet {
         if !rect.contains(point) { return }
         let nearest = Self.otherDisplayBounds.min { $0.distance(to: point) < $1.distance(to: point) }
         guard let nearest else { return }
+        ClosetLog.write("pointer: pushed out of the closet from \(point)")
         CGWarpMouseCursorPosition(CGPoint(
             x: point.x.coerce(in: nearest.minX ... nearest.maxX - 1),
             y: point.y.coerce(in: nearest.minY ... nearest.maxY - 1),

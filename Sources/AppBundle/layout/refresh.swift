@@ -158,15 +158,23 @@ private func layoutWorkspaces() async throws {
         return
     }
     // to reduce flicker, first unhide visible workspaces, then hide invisible ones
+    let started = DispatchTime.now()
     for monitor in monitors {
         let workspace = monitor.activeWorkspace
         workspace.allLeafWindowsRecursive.forEach { ($0 as! MacWindow).unhideFromCloset() } // todo as!
         try await workspace.layoutWorkspace()
     }
+    let shown = ClosetLog.milliseconds(since: started)
+    var hidden = 0
     for workspace in Workspace.all where !workspace.isVisible {
         for window in workspace.allLeafWindowsRecursive {
             try await (window as! MacWindow).hideInCloset() // todo as!
+            hidden += 1
         }
+    }
+    let total = ClosetLog.milliseconds(since: started)
+    if total >= 200 {
+        ClosetLog.write("layout: \(total) ms, visible workspaces \(shown) ms, \(hidden) windows hidden in \(total - shown) ms")
     }
 }
 
