@@ -63,9 +63,13 @@ final class Closet {
         self.display = display
         Self.id.withLock { $0 = id }
         place()
+        label()
         unsafe CGDisplayRegisterReconfigurationCallback({ _, flags, _ in
             if flags.contains(.beginConfigurationFlag) { return }
-            Task { @MainActor in Closet.shared.place() }
+            Task { @MainActor in
+                Closet.shared.place()
+                Closet.shared.label()
+            }
         }, nil)
         pointerMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged],
@@ -77,6 +81,47 @@ final class Closet {
     /// Diagonally off the bottom-right corner of the other displays. macOS keeps every display touching another, so
     /// it snaps the closet to that corner.
     ///
+    private var labeled = false
+
+    /// A desktop picture that names the closet, so it's told apart from real monitors in System Settings, which lists
+    /// it with a thumbnail of its desktop. The closet's NSScreen may show up only after a reconfiguration, so this is
+    /// tried again on each until it works
+    private func label() {
+        guard !labeled, let screen = NSScreen.screens.first(where: Self.isCloset) else { return }
+        let size = NSSize(width: 1600, height: 1000)
+        let image = NSImage(size: size, flipped: false) { rect in
+            NSColor(calibratedRed: 0.10, green: 0.11, blue: 0.14, alpha: 1).setFill()
+            rect.fill()
+            let center = NSMutableParagraphStyle()
+            center.alignment = .center
+            func draw(_ text: String, _ font: NSFont, _ alpha: CGFloat, _ y: CGFloat) {
+                (text as NSString).draw(
+                    in: NSRect(x: 0, y: y, width: rect.width, height: font.pointSize * 1.4),
+                    withAttributes: [.font: font, .foregroundColor: NSColor(white: 1, alpha: alpha), .paragraphStyle: center],
+                )
+            }
+            draw("AeroSpace Closet", .boldSystemFont(ofSize: 130), 1, 520)
+            draw("Windows of hidden workspaces wait here", .systemFont(ofSize: 60), 0.75, 380)
+            draw("Leave this display where it is", .systemFont(ofSize: 60), 0.75, 290)
+            return true
+        }
+        guard let tiff = image.tiffRepresentation,
+              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]),
+              let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+                  .appendingPathComponent(aeroSpaceAppId, isDirectory: true)
+        else { return }
+        let url = folder.appendingPathComponent("closet.png")
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try png.write(to: url)
+            try NSWorkspace.shared.setDesktopImageURL(url, for: screen, options: [
+                .imageScaling: NSImageScaling.scaleProportionallyUpOrDown.rawValue,
+                .allowClipping: true,
+            ])
+            labeled = true
+        } catch {}
+    }
+
     /// Moving the closet is a display reconfiguration too, which calls ``place()`` again. A display WindowServer has
     /// only just added ignores the first move, so ``place()`` tries the same origin a few times, then gives up until
     /// the other displays change: if macOS keeps the closet elsewhere, asking forever would reconfigure the displays
