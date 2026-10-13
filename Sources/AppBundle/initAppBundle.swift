@@ -17,6 +17,7 @@ import Foundation
         await bootstrapConfig_nonCancellable()
         _ = await reloadConfig_nonCancellable()
 
+        Closet.shared.open()
         startUnixSocketServer()
         GlobalObserver.initObserver()
         Workspace.garbageCollectUnusedWorkspaces() // init workspaces

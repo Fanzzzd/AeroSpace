@@ -72,11 +72,14 @@ extension Window {
     fileprivate func layoutFloatingWindow(_ context: LayoutContext) async throws {
         let workspace = context.workspace
         let windowRect = try await getAxRect(.cancellable) // Probably not idempotent
+        // A window on the closet isn't on any monitor: an app may open a new window next to its hidden ones
+        let closet = Closet.shared.rect.flatMap { closet in windowRect.map { closet.contains($0.center) } == true ? closet : nil }
         let currentMonitor = windowRect?.center.monitorApproximation
-        if let currentMonitor, let windowRect, workspace != currentMonitor.activeWorkspace {
+        let sourceRect = closet ?? currentMonitor.flatMap { workspace != $0.activeWorkspace ? $0.visibleRect : nil }
+        if let sourceRect, let windowRect {
             let windowTopLeftCorner = windowRect.topLeftCorner
-            let xProportion = (windowTopLeftCorner.x - currentMonitor.visibleRect.topLeftX) / currentMonitor.visibleRect.width
-            let yProportion = (windowTopLeftCorner.y - currentMonitor.visibleRect.topLeftY) / currentMonitor.visibleRect.height
+            let xProportion = (windowTopLeftCorner.x - sourceRect.topLeftX) / sourceRect.width
+            let yProportion = (windowTopLeftCorner.y - sourceRect.topLeftY) / sourceRect.height
 
             let workspaceRect = workspace.workspaceMonitor.visibleRect
             var newX = workspaceRect.topLeftX + xProportion * workspaceRect.width

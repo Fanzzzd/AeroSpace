@@ -121,13 +121,13 @@ final class MacWindow: Window {
 
     // todo it's part of the window layout and should be moved to layoutRecursive.swift
     @MainActor
-    func hideInCorner(_ corner: OptimalHideCorner) async throws {
-        guard let nodeMonitor else { return }
-        // Don't accidentally override prevUnhiddenEmulationPosition in case of subsequent `hideInCorner` calls
-        if !isHiddenInCorner {
+    func hideInCloset() async throws {
+        guard let closet = Closet.shared.rect else { return }
+        // Don't accidentally override prevUnhiddenEmulationPosition in case of subsequent `hideInCloset` calls
+        if !isHiddenInCloset {
             guard let windowRect = try await getAxRect(.cancellable) else { return }
-            // Check for isHiddenInCorner for the second time because of the suspension point above
-            if !isHiddenInCorner {
+            // Check for isHiddenInCloset for the second time because of the suspension point above
+            if !isHiddenInCloset {
                 let topLeftCorner = windowRect.topLeftCorner
                 let monitorRect = windowRect.center.monitorApproximation.rect // Similar to layoutFloatingWindow. Non idempotent
                 let absolutePoint = topLeftCorner - monitorRect.topLeftCorner
@@ -138,25 +138,11 @@ final class MacWindow: Window {
                 }
             }
         }
-        let p: CGPoint
-        switch corner {
-            case .bottomLeftCorner:
-                guard let s = try await getAxSize(.cancellable) else { fallthrough }
-                // Zoom will jump off if you do one pixel offset https://github.com/nikitabobko/AeroSpace/issues/527
-                // todo this ad hoc won't be necessary once I implement optimization suggested by Zalim
-                let onePixelOffset = macApp.appId == .zoom ? .zero : CGPoint(x: 1, y: -1)
-                p = nodeMonitor.visibleRect.bottomLeftCorner + onePixelOffset + CGPoint(x: -s.width, y: 0)
-            case .bottomRightCorner:
-                // Zoom will jump off if you do one pixel offset https://github.com/nikitabobko/AeroSpace/issues/527
-                // todo this ad hoc won't be necessary once I implement optimization suggested by Zalim
-                let onePixelOffset = macApp.appId == .zoom ? .zero : CGPoint(x: 1, y: 1)
-                p = nodeMonitor.visibleRect.bottomRightCorner - onePixelOffset
-        }
-        setAxFrame(p, nil)
+        setAxFrame(closet.topLeftCorner, nil)
     }
 
     @MainActor
-    func unhideFromCorner() {
+    func unhideFromCloset() {
         guard let prevUnhiddenProportionalPositionInsideWorkspaceRect else { return }
         guard let nodeWorkspace else { return } // hiding only makes sense for workspace windows
         guard let parent else { return }
@@ -183,7 +169,7 @@ final class MacWindow: Window {
         self.prevUnhiddenProportionalPositionInsideWorkspaceRect = nil
     }
 
-    override var isHiddenInCorner: Bool {
+    override var isHiddenInCloset: Bool {
         prevUnhiddenProportionalPositionInsideWorkspaceRect != nil
     }
 

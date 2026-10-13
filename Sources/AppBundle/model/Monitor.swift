@@ -102,7 +102,7 @@ private let testMonitor = MonitorImpl(
 
 var mainMonitor: Monitor {
     if isUnitTest { return testMonitor }
-    let screens = NSScreen.screens
+    let screens = NSScreen.screens.filter { !Closet.isCloset($0) }
     // Fallback: If main screen can't be found (e.g., during display reconfiguration),
     // return screens.first or testMonitor to avoid crash
     let screen = screens.withIndex.singleOrNil(where: \.value.isMainScreen) ?? screens.first.map { (0, $0) }
@@ -115,7 +115,7 @@ var monitors: [Monitor] {
     isUnitTest
         ? [testMonitor]
         : NSScreen.screens.enumerated()
-            .filter { !$0.element.isIgnored }
+            .filter { !$0.element.isIgnored && !Closet.isCloset($0.element) }
             .map { $0.element.toMonitor(monitorAppKitNsScreenScreensId: $0.offset + 1) }
 }
 
@@ -123,7 +123,7 @@ var monitors: [Monitor] {
 /// windows that are moved onto them.
 @MainActor
 var ignoredMonitorRects: [Rect] {
-    isUnitTest ? [] : NSScreen.screens.filter(\.isIgnored).map(\.rect)
+    isUnitTest ? [] : NSScreen.screens.filter { $0.isIgnored && !Closet.isCloset($0) }.map(\.rect)
 }
 
 @MainActor

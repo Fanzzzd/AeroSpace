@@ -36,8 +36,6 @@ Install via [Homebrew](https://brew.sh/) to get autoupdates (Preferred)
 brew install --cask nikitabobko/tap/aerospace
 ```
 
-In multi-monitor setup please make sure that monitors [are properly arranged](https://nikitabobko.github.io/AeroSpace/guide#proper-monitor-arrangement).
-
 Other installation options: https://nikitabobko.github.io/AeroSpace/guide#installation
 
 > [!NOTE]

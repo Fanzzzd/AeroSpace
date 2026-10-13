@@ -436,7 +436,7 @@ Native macOS Spaces have a lot of problems
 * Apple doesn't provide public API to communicate with Spaces (create/delete/reorder/switch Space and move windows between Spaces)
 
 Since Spaces are so hard to deal with, AeroSpace reimplements Spaces and calls them "Workspaces".
-The idea is that if the workspace isn’t active then all of its windows are placed outside the visible area of the screen, in the bottom right or left corner.
+The idea is that if the workspace isn’t active then all of its windows are moved to the closet: a virtual display that AeroSpace creates for that, called "AeroSpace Closet".
 Once you switch back to the workspace, (e.g. by the means of xref:commands.adoc#workspace[workspace] command, or `cmd + tab`) windows are placed back to the visible area of the screen.
 
 When you quit the AeroSpace or when the AeroSpace detects that it's about to crash, AeroSpace will place all windows back to the visible area of the screen.
@@ -445,33 +445,18 @@ AeroSpace shows the name of currently active workspace in its tray icon (top rig
 
 The intended workflow of using AeroSpace workspaces is to only have one macOS Space (or as many monitors you have, if `Displays have separate Spaces` is enabled) and don’t interact with macOS Spaces anymore.
 
-[NOTE]
-====
-For better or worse, macOS doesn’t allow to place windows outside the visible area entirely.
-You will still be able to see a 1 pixel vertical line of "hidden" windows in the bottom right or left corner of your screen.
-That means, that if AeroSpace crashes badly you will still be able to manually "unhide" the windows by dragging these few pixels to the center of the screen.
+[#the-closet]
+=== The closet
 
-If you want to minimize the visibility of hidden windows, it's recommended to place Dock in the bottom (and additionally turn automatic hiding on)
-====
+macOS doesn’t allow to place windows outside the visible area entirely, and apps pull a window that hangs off the screen back onto a screen whenever a display is added or removed.
+That's why AeroSpace keeps the windows of invisible workspaces on a display of its own, the closet, instead of hiding them off screen.
+Nothing of them shows on your monitors, they stay put when monitors come and go, and monitors can be arranged in any way.
 
-=== Proper monitor arrangement
-
-Since AeroSpace needs a free space to hide windows in,
-please make sure to arrange monitors in a way where *every monitor has free space in the bottom right or left corner.* (`System Settings -> Displays -> Arrange...`)
-
-If you fail to arrange your monitors properly, you will see parts of hidden windows on other monitors.
-
-.Bad monitor arrangement. Monitor 2 doesn't have free space in either of the bottom corners
-image::./assets/monitor-arrangement-1-bad.svg[,,align="center"]
-
-.Good monitor arrangement. Every monitor has free space in either of the bottom corners
-image::./assets/monitor-arrangement-1-good.svg[,,align="center"]
-
-.Bad monitor arrangement. Monitor 1 doesn't have free space in either of the bottom corners
-image::./assets/monitor-arrangement-2-bad.svg[,,align="center"]
-
-.Good monitor arrangement. Every monitor has free space in either of the bottom corners
-image::./assets/monitor-arrangement-2-good.svg[,,align="center"]
+* The closet sits diagonally off the bottom-right corner of your monitors. macOS keeps every display touching another, so a pointer could reach it only through that exact corner; AeroSpace moves the pointer back if it does.
+* The closet isn't a monitor for AeroSpace: no workspace shows on it, and it doesn't count in `list-monitors`, monitor sequence numbers or `focus-monitor`.
+* It's listed in `System Settings -> Displays`. Leave it where it is.
+* It lives as long as AeroSpace runs. If AeroSpace crashes, macOS moves the windows on it to your monitors.
+* AeroSpace makes it with the private `CGVirtualDisplay` API. If that fails, AeroSpace says so, and windows of invisible workspaces stay on screen.
 
 [#a-note-on-mission-control]
 === A note on mission control

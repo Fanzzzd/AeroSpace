@@ -1,6 +1,6 @@
 # AeroSpace, `sidescreen` branch
 
-This branch is upstream [AeroSpace](https://github.com/nikitabobko/AeroSpace) by Nikita Bobko plus one patch.
+This branch is upstream [AeroSpace](https://github.com/nikitabobko/AeroSpace) by Nikita Bobko plus two patches.
 All credit for AeroSpace goes to its authors. The license is unchanged (MIT, see [legal/LICENSE.txt](./legal/LICENSE.txt)).
 
 ## What it adds
@@ -21,13 +21,32 @@ workspaces there, shifts monitor sequence numbers, and tiles and hides the windo
 - The main monitor is never ignored. Only name regexes are accepted.
 
 The option is proposed upstream in [Discussion #2305](https://github.com/nikitabobko/AeroSpace/discussions/2305) and
-[PR #2306](https://github.com/nikitabobko/AeroSpace/pull/2306). If upstream merges it, this branch will be retired.
+[PR #2306](https://github.com/nikitabobko/AeroSpace/pull/2306). If upstream merges it, the branch keeps only the closet patch.
+
+## The closet
+
+Upstream AeroSpace hides the windows of invisible workspaces off screen, in a bottom corner of a monitor, with a pixel
+left showing. Apps pull such windows back onto a screen whenever a display is added or removed, so every display change
+flashes them on your monitor until AeroSpace hides them again, 0.15 to 2 s later. Apps that make virtual displays add
+and remove displays often.
+
+This branch moves those windows to a virtual display of its own instead, the closet, and drops the corner logic:
+
+- Nothing of hidden windows shows on your monitors, and display changes don't move them: on a MacBook with an external
+  monitor, a virtual display added and removed moved 5 hidden windows 20 times with corner hiding, and none over 3
+  changes with the closet.
+- Monitors can be arranged in any way. Upstream needs free space in a bottom corner of each.
+- The closet sits diagonally off the bottom-right corner of the monitors. AeroSpace moves the pointer back if it gets
+  there. It isn't a monitor for AeroSpace: no workspace, not in `list-monitors`.
+- If AeroSpace crashes, macOS moves the windows on the closet to the remaining monitors.
+
+The closet is made with the private `CGVirtualDisplay` API. It is kept in this fork only, not proposed upstream.
 
 ## How releases work
 
-- The branch is the latest upstream release tag plus two commits: the `ignored-monitors` patch, and the fork files
-  (this file, the README note, `.github/workflows/sidescreen-release.yml` and the scripts in `.github/sidescreen/`).
-  No upstream file other than README.md is changed outside the patch.
+- The branch is the latest upstream release tag plus three commits: the `ignored-monitors` patch, the fork files
+  (this file, the README note, `.github/workflows/sidescreen-release.yml` and the scripts in `.github/sidescreen/`),
+  and the closet patch. No upstream file other than README.md is changed outside the patches.
 - Once a week, GitHub Actions rebases those commits onto the latest upstream release, builds, and runs upstream's
   `./test.sh`. When upstream has published a release that this fork hasn't, it builds it with `./build-release.sh`,
   notarizes it, and publishes `sidescreen-<upstream tag>` on the Releases page of this repository.
