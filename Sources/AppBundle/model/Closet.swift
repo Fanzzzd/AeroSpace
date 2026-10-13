@@ -52,13 +52,8 @@ final class Closet {
         // Virtual displays are at most 16384 pixels wide and high, and the closet is Retina
         let width = min(Int(size.width), 8192)
         let height = min(Int(size.height), 8192)
-        ClosetLog.startWatchdog()
-        PerfStats.start()
-        ClosetLog.write("open: making a \(width)x\(height) closet; displays \(Self.describeDisplays()), load \(ClosetLog.loadAverage)")
-        let making = DispatchTime.now()
-        let made = Self.makeDisplay(width: width, height: height)
-        ClosetLog.write("open: made display \(made.map { "\($0.1)" } ?? "none") in \(ClosetLog.milliseconds(since: making)) ms")
-        guard let (display, id) = made else {
+        guard let (display, id) = Self.makeDisplay(width: width, height: height) else {
+            ClosetLog.write("open: couldn't make a \(width)x\(height) closet; displays \(Self.describeDisplays())")
             MessageModel.shared.message = Message(
                 description: "Hiding windows",
                 body: "AeroSpace couldn't create its closet display, so windows of invisible workspaces stay on screen",
@@ -68,71 +63,36 @@ final class Closet {
         }
         self.display = display
         Self.id.withLock { $0 = id }
-        place()
-        label()
+        ClosetLog.write("open: made display \(id), \(width)x\(height); displays \(Self.describeDisplays())")
+        displaysChanged()
         // macOS calls back once per display for each change: handle the change once, after the last call
-        unsafe CGDisplayRegisterReconfigurationCallback({ display, flags, _ in
-            ClosetLog.write("reconfiguration: display \(display) \(Closet.describe(flags))")
+        unsafe CGDisplayRegisterReconfigurationCallback({ _, flags, _ in
             if flags.contains(.beginConfigurationFlag) { return }
             Task { @MainActor in
                 if Closet.shared.changeScheduled { return }
                 Closet.shared.changeScheduled = true
                 Task { @MainActor in
                     Closet.shared.changeScheduled = false
-                    ClosetLog.timed("place") { Closet.shared.place() }
-                    ClosetLog.timed("label") { Closet.shared.label() }
+                    Closet.shared.displaysChanged()
                 }
             }
         }, nil)
+        // Global monitors call back on the main thread
         pointerMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged],
         ) { _ in
-            Task { @MainActor in Closet.shared.pushPointerOut() }
+            MainActor.assumeIsolated { Closet.shared.pushPointerOut() }
         }
     }
 
+    private var changeScheduled = false
     private var labeled = false
 
-    /// A desktop picture that names the closet, so it's told apart from real monitors in System Settings, which lists
-    /// it with a thumbnail of its desktop. The closet's NSScreen may show up only after a reconfiguration, so this is
-    /// tried again on each until it works
-    private func label() {
-        guard !labeled, let screen = NSScreen.screens.first(where: Self.isCloset) else { return }
-        let size = NSSize(width: 1600, height: 1000)
-        let image = NSImage(size: size, flipped: false) { rect in
-            NSColor(calibratedRed: 0.10, green: 0.11, blue: 0.14, alpha: 1).setFill()
-            rect.fill()
-            let center = NSMutableParagraphStyle()
-            center.alignment = .center
-            func draw(_ text: String, _ font: NSFont, _ alpha: CGFloat, _ y: CGFloat) {
-                (text as NSString).draw(
-                    in: NSRect(x: 0, y: y, width: rect.width, height: font.pointSize * 1.4),
-                    withAttributes: [.font: font, .foregroundColor: NSColor(white: 1, alpha: alpha), .paragraphStyle: center],
-                )
-            }
-            draw("AeroSpace Closet", .boldSystemFont(ofSize: 130), 1, 520)
-            draw("Windows of hidden workspaces wait here", .systemFont(ofSize: 60), 0.75, 380)
-            draw("Leave this display where it is", .systemFont(ofSize: 60), 0.75, 290)
-            return true
-        }
-        guard let tiff = image.tiffRepresentation,
-              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]),
-              let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
-                  .appendingPathComponent(aeroSpaceAppId, isDirectory: true)
-        else { return }
-        let url = folder.appendingPathComponent("closet.png")
-        let started = DispatchTime.now()
-        do {
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            try png.write(to: url)
-            try NSWorkspace.shared.setDesktopImageURL(url, for: screen, options: [
-                .imageScaling: NSImageScaling.scaleProportionallyUpOrDown.rawValue,
-                .allowClipping: true,
-            ])
-            labeled = true
-            ClosetLog.write("label: set in \(ClosetLog.milliseconds(since: started)) ms")
-        } catch {
-            ClosetLog.write("label: failed after \(ClosetLog.milliseconds(since: started)) ms: \(error)")
+    private func displaysChanged() {
+        place()
+        // The closet's NSScreen may show up only after a reconfiguration, so the label is tried on each until it works
+        if !labeled, let screen = NSScreen.screens.first(where: Self.isCloset) {
+            labeled = ClosetDesktopPicture.set(on: screen)
         }
     }
 
@@ -140,8 +100,6 @@ final class Closet {
     /// only just added ignores the first move, so ``place()`` tries the same origin a few times, then gives up until
     /// the other displays change: if macOS keeps the closet elsewhere, asking forever would reconfigure the displays
     /// forever
-    private var changeScheduled = false
-
     private func place() {
         guard let displayId, CGDisplayIsMain(displayId) == 0, !moving else { return }
         let bounds = CGDisplayBounds(displayId)
@@ -156,32 +114,18 @@ final class Closet {
             ClosetLog.write("place: closet at \(bounds.origin), target \(origin): gave up after 3 attempts")
             return
         }
-        // A safety net while the cause of the 2026-10-13 freeze is open: however place() is reached, it moves the
-        // closet at most 10 times a minute, then rests for 5 minutes
-        let now = Date()
-        recentMoves.removeAll { now.timeIntervalSince($0) > 60 }
-        if let restingUntil, now < restingUntil { return }
-        if recentMoves.count >= 10 {
-            restingUntil = now.addingTimeInterval(300)
-            ClosetLog.write("place: BREAKER: 10 moves within a minute, resting 5 minutes; displays \(Self.describeDisplays())")
-            return
-        }
-        recentMoves.append(now)
         placement = (origin, attempts + 1)
         ClosetLog.write("place: closet at \(bounds.origin), target \(origin), attempt \(attempts + 1); displays \(Self.describeDisplays())")
         // A display configuration blocks its thread for 0.3 to 2 s, so it runs off the main thread, one at a time.
         // The change it makes calls place() again, which checks the result
         moving = true
         Self.configuring.async {
-            let started = DispatchTime.now()
             var config: CGDisplayConfigRef? = nil
             let began = unsafe CGBeginDisplayConfiguration(&config)
             if began == .success {
                 unsafe CGConfigureDisplayOrigin(config, displayId, Int32(origin.x), Int32(origin.y))
                 let completed = unsafe CGCompleteDisplayConfiguration(config, .forSession)
-                ClosetLog.write(
-                    "place: completed \(completed.rawValue) in \(ClosetLog.milliseconds(since: started)) ms; closet now at \(CGDisplayBounds(displayId).origin)",
-                )
+                ClosetLog.write("place: completed \(completed.rawValue); closet now at \(CGDisplayBounds(displayId).origin)")
             } else {
                 ClosetLog.write("place: CGBeginDisplayConfiguration failed: \(began.rawValue)")
             }
@@ -199,7 +143,7 @@ final class Closet {
     /// Where the closet goes: the bottom-right corner of one of the other displays, the lowest, then rightmost, where
     /// the closet would neither overlap a display nor share an edge with one. Then a pointer reaches it only through
     /// that exact corner, and macOS keeps it there, as it keeps every display touching another
-    private static func target(size: CGSize, others: [CGRect]) -> CGPoint? {
+    nonisolated static func target(size: CGSize, others: [CGRect]) -> CGPoint? {
         let corners = others.map { CGPoint(x: $0.maxX, y: $0.maxY) }
             .sorted { ($0.y, $0.x) > ($1.y, $1.x) }
         let clear = corners.first { corner in
@@ -214,9 +158,6 @@ final class Closet {
         return clear ?? corners.first
     }
 
-    private var recentMoves: [Date] = []
-    private var restingUntil: Date? = nil
-
     /// Every active display, for the log: id, vendor and bounds
     private static func describeDisplays() -> String {
         var ids = [CGDirectDisplayID](repeating: 0, count: 32)
@@ -226,15 +167,6 @@ final class Closet {
             let b = CGDisplayBounds(d)
             return "\(d)/\(String(CGDisplayVendorNumber(d), radix: 16))@\(Int(b.minX)),\(Int(b.minY)) \(Int(b.width))x\(Int(b.height))"
         }.joined(separator: " ")
-    }
-
-    nonisolated static func describe(_ flags: CGDisplayChangeSummaryFlags) -> String {
-        let names: [(CGDisplayChangeSummaryFlags, String)] = [
-            (.beginConfigurationFlag, "begin"), (.movedFlag, "moved"), (.setMainFlag, "main"), (.setModeFlag, "mode"),
-            (.addFlag, "add"), (.removeFlag, "remove"), (.enabledFlag, "enabled"), (.disabledFlag, "disabled"),
-            (.mirrorFlag, "mirror"), (.unMirrorFlag, "unmirror"), (.desktopShapeChangedFlag, "shape"),
-        ]
-        return names.filter { flags.contains($0.0) }.map(\.1).joined(separator: ",")
     }
 
     /// Bounds of the active displays other than the closet. Mirrored displays share their source's bounds and aren't

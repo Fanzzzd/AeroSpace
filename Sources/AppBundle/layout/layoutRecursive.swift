@@ -3,6 +3,8 @@ import AppKit
 extension Workspace {
     @MainActor
     func layoutWorkspace() async throws {
+        // The workspace is visible: its windows leave the closet
+        for window in allLeafWindowsRecursive { window.closetOffset = nil }
         if isEffectivelyEmpty { return }
         let rect = workspaceMonitor.visibleRectPaddedByOuterGaps
         // If monitors are aligned vertically and the monitor below has smaller width, then macOS may not allow the
@@ -72,30 +74,45 @@ extension Window {
     fileprivate func layoutFloatingWindow(_ context: LayoutContext) async throws {
         let workspace = context.workspace
         let windowRect = try await getAxRect(.cancellable) // Probably not idempotent
-        // A window on the closet isn't on any monitor: an app may open a new window next to its hidden ones
-        let closet = Closet.shared.rect.flatMap { closet in windowRect.map { closet.contains($0.center) } == true ? closet : nil }
-        let currentMonitor = windowRect?.center.monitorApproximation
-        let sourceRect = closet ?? currentMonitor.flatMap { workspace != $0.activeWorkspace ? $0.visibleRect : nil }
-        if let sourceRect, let windowRect {
-            let windowTopLeftCorner = windowRect.topLeftCorner
-            let xProportion = (windowTopLeftCorner.x - sourceRect.topLeftX) / sourceRect.width
-            let yProportion = (windowTopLeftCorner.y - sourceRect.topLeftY) / sourceRect.height
-
-            let workspaceRect = workspace.workspaceMonitor.visibleRect
-            var newX = workspaceRect.topLeftX + xProportion * workspaceRect.width
-            var newY = workspaceRect.topLeftY + yProportion * workspaceRect.height
-
-            let windowWidth = windowRect.width
-            let windowHeight = windowRect.height
-            newX = newX.coerce(in: workspaceRect.minX ... max(workspaceRect.minX, workspaceRect.maxX - windowWidth))
-            newY = newY.coerce(in: workspaceRect.minY ... max(workspaceRect.minY, workspaceRect.maxY - windowHeight))
-
-            setAxFrame(CGPoint(x: newX, y: newY), nil)
+        // A window that is elsewhere, on the closet or on a monitor that shows another workspace, comes over to the same
+        // relative spot
+        if let windowRect, let sourceRect = sourceRect(of: windowRect, for: workspace) {
+            let proportion = sourceRect.proportion(of: windowRect.topLeftCorner)
+            setAxFrame(workspace.workspaceMonitor.visibleRect.topLeft(at: proportion, for: windowRect.size), nil)
         }
         if isFullscreen {
             layoutFullscreen(context)
             isFullscreen = false
         }
+    }
+
+    /// The closet, or the monitor of another workspace, when the window is there
+    @MainActor
+    private func sourceRect(of windowRect: Rect, for workspace: Workspace) -> Rect? {
+        if let closet = Closet.shared.rect, closet.contains(windowRect.topLeftCorner) { return closet }
+        let monitor = windowRect.center.monitorApproximation
+        return monitor.activeWorkspace == workspace ? nil : monitor.visibleRect
+    }
+
+    /// Moves the window of an invisible workspace onto the closet, to the spot that matches where it was on its monitor.
+    /// ``layoutFloatingWindow(_:)`` brings it back the same way
+    @MainActor
+    func parkInCloset(_ closet: Rect) async throws {
+        if closetOffset == nil {
+            guard let windowRect = try await getAxRect(.cancellable) else { return }
+            // Check again after the suspension point above
+            if closetOffset == nil {
+                // An app may open a new window next to its hidden ones, on the closet
+                let sourceRect = closet.contains(windowRect.topLeftCorner) ? closet : windowRect.center.monitorApproximation.visibleRect
+                let topLeft = closet.topLeft(at: sourceRect.proportion(of: windowRect.topLeftCorner), for: windowRect.size)
+                closetOffset = topLeft - closet.topLeftCorner
+                if isFloating {
+                    lastFloatingSize = windowRect.size
+                }
+            }
+        }
+        // Each refresh session asks again: the frame write skips windows that are already there
+        if let closetOffset { setAxFrame(closet.topLeftCorner + closetOffset, nil) }
     }
 
     @MainActor

@@ -61,5 +61,19 @@ extension Rect {
 
     var size: CGSize { CGSize(width: width, height: height) }
 
+    /// Where `point` is relative to the top left corner, in fractions of the width and height
+    func proportion(of point: CGPoint) -> CGPoint {
+        CGPoint(x: (point.x - topLeftX) / width, y: (point.y - topLeftY) / height)
+    }
+
+    /// The top left corner for a window of `size` at `proportion` (see ``proportion(of:)``), moved left and up as far
+    /// as it takes to keep the window inside, if it fits
+    func topLeft(at proportion: CGPoint, for size: CGSize) -> CGPoint {
+        CGPoint(
+            x: (topLeftX + proportion.x * width).coerce(in: minX ... max(minX, maxX - size.width)),
+            y: (topLeftY + proportion.y * height).coerce(in: minY ... max(minY, maxY - size.height)),
+        )
+    }
+
     func getDimension(_ orientation: Orientation) -> CGFloat { orientation == .h ? width : height }
 }

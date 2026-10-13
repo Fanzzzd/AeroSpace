@@ -149,10 +149,10 @@ final class MacApp: AbstractApp {
 
     func setAxFrame(_ windowId: UInt32, _ topLeft: CGPoint?, _ size: CGSize?) {
         setFrameJobs.removeValue(forKey: windowId)?.cancel()
-        let appName = name ?? "?"
         setFrameJobs[windowId] = withWindowAsync(windowId, .cancellable) { [axApp] window, job in
-            let started = DispatchTime.now()
-            defer { PerfStats.frame(appName, ms: ClosetLog.milliseconds(since: started)) }
+            // Layout asks for every window's frame on every refresh session. Moving a window that is already there
+            // would make the app lay it out again and post AXMoved, which starts another refresh session
+            if window.hasFrame(topLeft, size) { return }
             try disableAnimations(app: axApp.threadGuarded, job) {
                 try setFrame(window, topLeft, size, job)
             }
@@ -421,13 +421,26 @@ private func setFrame(_ window: AXUIElement, _ topLeft: CGPoint?, _ size: CGSize
     if let size { window.set(Ax.sizeAttr, size) }
 }
 
+extension AXUIElement {
+    /// Whether the window is at `topLeft` with `size`, give or take the fraction of a point apps round frames to
+    fileprivate func hasFrame(_ topLeft: CGPoint?, _ size: CGSize?) -> Bool {
+        func near(_ a: CGFloat, _ b: CGFloat) -> Bool { abs(a - b) < 1 }
+        if let topLeft {
+            guard let current = get(Ax.topLeftCornerAttr), near(current.x, topLeft.x), near(current.y, topLeft.y) else { return false }
+        }
+        if let size {
+            guard let current = get(Ax.sizeAttr), near(current.width, size.width), near(current.height, size.height) else { return false }
+        }
+        return true
+    }
+}
+
 // Some undocumented magic
 // References: https://github.com/koekeishiya/yabai/commit/3fe4c77b001e1a4f613c26f01ea68c0f09327f3a
 //             https://github.com/rxhanson/Rectangle/pull/285
 private func disableAnimations<T>(app: AXUIElement, _ job: RunLoopJob, _ body: () throws -> T) throws -> T {
     let wasEnabled = app.get(Ax.enhancedUserInterfaceAttr) == true
     if wasEnabled {
-        PerfStats.enhancedUserInterfaceToggled()
         app.set(Ax.enhancedUserInterfaceAttr, false)
     }
     defer {

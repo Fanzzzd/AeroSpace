@@ -100,30 +100,32 @@ private let testMonitor = MonitorImpl(
     isMain: true,
 )
 
+/// Every screen but the closet, with its 1-based index in `NSScreen.screens`
+private var screens: [(id: Int, screen: NSScreen)] {
+    NSScreen.screens.enumerated().filter { !Closet.isCloset($0.element) }.map { ($0.offset + 1, $0.element) }
+}
+
 var mainMonitor: Monitor {
     if isUnitTest { return testMonitor }
-    let screens = NSScreen.screens.filter { !Closet.isCloset($0) }
     // Fallback: If main screen can't be found (e.g., during display reconfiguration),
     // return screens.first or testMonitor to avoid crash
-    let screen = screens.withIndex.singleOrNil(where: \.value.isMainScreen) ?? screens.first.map { (0, $0) }
-    guard let screen else { return testMonitor }
-    return LazyMonitor(monitorAppKitNsScreenScreensId: screen.index + 1, isMain: true, screen.value)
+    let screens = screens
+    guard let main = screens.singleOrNil(where: \.screen.isMainScreen) ?? screens.first else { return testMonitor }
+    return LazyMonitor(monitorAppKitNsScreenScreensId: main.id, isMain: true, main.screen)
 }
 
 @MainActor
 var monitors: [Monitor] {
     isUnitTest
         ? [testMonitor]
-        : NSScreen.screens.enumerated()
-            .filter { !$0.element.isIgnored && !Closet.isCloset($0.element) }
-            .map { $0.element.toMonitor(monitorAppKitNsScreenScreensId: $0.offset + 1) }
+        : screens.filter { !$0.screen.isIgnored }.map { $0.screen.toMonitor(monitorAppKitNsScreenScreensId: $0.id) }
 }
 
 /// Rects of the monitors matched by `ignored-monitors`. AeroSpace doesn't assign workspaces to them and releases
 /// windows that are moved onto them.
 @MainActor
 var ignoredMonitorRects: [Rect] {
-    isUnitTest ? [] : NSScreen.screens.filter { $0.isIgnored && !Closet.isCloset($0) }.map(\.rect)
+    isUnitTest ? [] : screens.filter { $0.screen.isIgnored }.map(\.screen.rect)
 }
 
 @MainActor
