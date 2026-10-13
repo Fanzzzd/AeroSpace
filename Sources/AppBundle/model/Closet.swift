@@ -69,12 +69,18 @@ final class Closet {
         Self.id.withLock { $0 = id }
         place()
         label()
+        // macOS calls back once per display for each change: handle the change once, after the last call
         unsafe CGDisplayRegisterReconfigurationCallback({ display, flags, _ in
             ClosetLog.write("reconfiguration: display \(display) \(Closet.describe(flags))")
             if flags.contains(.beginConfigurationFlag) { return }
             Task { @MainActor in
-                ClosetLog.timed("place") { Closet.shared.place() }
-                ClosetLog.timed("label") { Closet.shared.label() }
+                if Closet.shared.changeScheduled { return }
+                Closet.shared.changeScheduled = true
+                Task { @MainActor in
+                    Closet.shared.changeScheduled = false
+                    ClosetLog.timed("place") { Closet.shared.place() }
+                    ClosetLog.timed("label") { Closet.shared.label() }
+                }
             }
         }, nil)
         pointerMonitor = NSEvent.addGlobalMonitorForEvents(
@@ -133,12 +139,17 @@ final class Closet {
     /// only just added ignores the first move, so ``place()`` tries the same origin a few times, then gives up until
     /// the other displays change: if macOS keeps the closet elsewhere, asking forever would reconfigure the displays
     /// forever
+    private var changeScheduled = false
+
     private func place() {
-        guard let displayId, CGDisplayIsMain(displayId) == 0 else { return }
-        guard let union = Self.otherDisplayBounds.reduce(nil, { $0?.union($1) ?? $1 }) else { return }
+        guard let displayId, CGDisplayIsMain(displayId) == 0, !moving else { return }
         let bounds = CGDisplayBounds(displayId)
-        if bounds.minX == union.maxX && bounds.minY == union.maxY { return }
-        let origin = CGPoint(x: union.maxX, y: union.maxY)
+        guard let origin = Self.target(size: bounds.size, others: Self.otherDisplayBounds) else { return }
+        if bounds.origin == origin {
+            // In place: a later move, such as the user's drag, gets its own attempts
+            placement = nil
+            return
+        }
         let attempts = placement?.origin == origin ? placement?.attempts ?? 0 : 0
         if attempts >= 3 {
             ClosetLog.write("place: closet at \(bounds.origin), target \(origin): gave up after 3 attempts")
@@ -157,18 +168,49 @@ final class Closet {
         recentMoves.append(now)
         placement = (origin, attempts + 1)
         ClosetLog.write("place: closet at \(bounds.origin), target \(origin), attempt \(attempts + 1); displays \(Self.describeDisplays())")
-        let started = DispatchTime.now()
-        var config: CGDisplayConfigRef? = nil
-        let began = unsafe CGBeginDisplayConfiguration(&config)
-        guard began == .success else {
-            ClosetLog.write("place: CGBeginDisplayConfiguration failed: \(began.rawValue)")
-            return
+        // A display configuration blocks its thread for 0.3 to 2 s, so it runs off the main thread, one at a time.
+        // The change it makes calls place() again, which checks the result
+        moving = true
+        Self.configuring.async {
+            let started = DispatchTime.now()
+            var config: CGDisplayConfigRef? = nil
+            let began = unsafe CGBeginDisplayConfiguration(&config)
+            if began == .success {
+                unsafe CGConfigureDisplayOrigin(config, displayId, Int32(origin.x), Int32(origin.y))
+                let completed = unsafe CGCompleteDisplayConfiguration(config, .forSession)
+                ClosetLog.write(
+                    "place: completed \(completed.rawValue) in \(ClosetLog.milliseconds(since: started)) ms; closet now at \(CGDisplayBounds(displayId).origin)",
+                )
+            } else {
+                ClosetLog.write("place: CGBeginDisplayConfiguration failed: \(began.rawValue)")
+            }
+            Task { @MainActor in
+                Closet.shared.moving = false
+                // A refused move makes no display change, so nothing calls place() back: check here
+                Closet.shared.place()
+            }
         }
-        unsafe CGConfigureDisplayOrigin(config, displayId, Int32(origin.x), Int32(origin.y))
-        let completed = unsafe CGCompleteDisplayConfiguration(config, .forSession)
-        ClosetLog.write(
-            "place: completed \(completed.rawValue) in \(ClosetLog.milliseconds(since: started)) ms; closet now at \(CGDisplayBounds(displayId).origin)",
-        )
+    }
+
+    private var moving = false
+    private static let configuring = DispatchQueue(label: "bobko.aerospace.closet-placement", qos: .userInitiated)
+
+    /// Where the closet goes: the bottom-right corner of one of the other displays, the lowest, then rightmost, where
+    /// the closet would neither overlap a display nor share an edge with one. Then a pointer reaches it only through
+    /// that exact corner, and macOS keeps it there, as it keeps every display touching another
+    private static func target(size: CGSize, others: [CGRect]) -> CGPoint? {
+        let corners = others.map { CGPoint(x: $0.maxX, y: $0.maxY) }
+            .sorted { ($0.y, $0.x) > ($1.y, $1.x) }
+        let clear = corners.first { corner in
+            let closet = CGRect(origin: corner, size: size)
+            return others.allSatisfy { other in
+                // Overlapping or sharing an edge: the rectangles touch along a line, not just at a corner
+                let overlapX = min(closet.maxX, other.maxX) - max(closet.minX, other.minX)
+                let overlapY = min(closet.maxY, other.maxY) - max(closet.minY, other.minY)
+                return !(overlapX >= 0 && overlapY >= 0 && (overlapX > 0 || overlapY > 0))
+            }
+        }
+        return clear ?? corners.first
     }
 
     private var recentMoves: [Date] = []
