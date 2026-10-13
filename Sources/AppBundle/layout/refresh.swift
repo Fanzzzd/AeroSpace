@@ -161,9 +161,17 @@ private func layoutWorkspaces() async throws {
         try await monitor.activeWorkspace.layoutWorkspace()
     }
     guard let closet = Closet.shared.rect else { return }
+    var unplaced: [Window] = []
     for workspace in Workspace.all where !workspace.isVisible {
-        for window in workspace.allLeafWindowsRecursive {
-            try await window.parkInCloset(closet)
+        for window in workspace.allLeafWindowsRecursive where !window.parkInCloset(closet) {
+            unplaced.append(window)
+        }
+    }
+    // Every other window is on its way by now. Windows that layout didn't place, such as floating ones, are asked
+    // where they are
+    for window in unplaced {
+        if let windowRect = try await window.getAxRect(.cancellable) {
+            window.parkInCloset(closet, windowRect: windowRect)
         }
     }
 }

@@ -148,19 +148,24 @@ final class MacApp: AbstractApp {
     }
 
     func setAxFrame(_ windowId: UInt32, _ topLeft: CGPoint?, _ size: CGSize?) {
+        let request = FrameRequest(topLeft: topLeft, size: size)
         setFrameJobs.removeValue(forKey: windowId)?.cancel()
-        setFrameJobs[windowId] = withWindowAsync(windowId, .cancellable) { [axApp] window, job in
-            // Layout asks for every window's frame on every refresh session. Moving a window that is already there
-            // would make the app lay it out again and post AXMoved, which starts another refresh session
-            if window.hasFrame(topLeft, size) { return }
+        setFrameJobs[windowId] = withAxWindowAsync(windowId, .cancellable) { [axApp] window, job in
+            // Layout asks for every window's frame on every refresh session. Writing what the window already has would
+            // make the app lay it out again and post AXMoved, which starts another refresh session
+            guard let current = try AppBundle.getAxRect(window: window.ax, job: job) else { return }
+            let missing = request.missing(from: current, lastAnswer: window.frameAnswer)
+            if missing.isEmpty { return }
             try disableAnimations(app: axApp.threadGuarded, job) {
-                try setFrame(window, topLeft, size, job)
+                try write(missing, of: request, to: window.ax, current: current, job)
             }
-            if let size, let actual = window.get(Ax.sizeAttr) {
+            guard let got = try AppBundle.getAxRect(window: window.ax, job: job) else { return }
+            window.frameAnswer = FrameAnswer(asked: request, got: got)
+            if let size {
                 // Terminals round to whole character cells, which isn't a minimum
                 let refused = CGSize(
-                    width: actual.width > size.width + 32 ? actual.width : 0,
-                    height: actual.height > size.height + 32 ? actual.height : 0,
+                    width: got.width > size.width + 32 ? got.width : 0,
+                    height: got.height > size.height + 32 ? got.height : 0,
                 )
                 if refused != .zero {
                     Task.startUnstructured { @MainActor in Window.get(byId: windowId)?.learnMinSize(refused) }
@@ -365,9 +370,13 @@ final class MacApp: AbstractApp {
     }
 
     private func withWindowAsync(_ windowId: UInt32, _ cm: CancellationMode, _ body: @Sendable @escaping (AXUIElement, RunLoopJob) throws -> ()) -> RunLoopJob {
+        withAxWindowAsync(windowId, cm) { window, job in try body(window.ax, job) }
+    }
+
+    private func withAxWindowAsync(_ windowId: UInt32, _ cm: CancellationMode, _ body: @Sendable @escaping (AxWindow, RunLoopJob) throws -> ()) -> RunLoopJob {
         thread?.runInLoopAsync(job: RunLoopJob(cm)) { [windows] job in
             guard let window = windows.threadGuarded[windowId] else { return }
-            try? body(window.ax, job)
+            try? body(window, job)
         } ?? .cancelled
     }
 }
@@ -375,6 +384,8 @@ final class MacApp: AbstractApp {
 private final class AxWindow {
     let windowId: UInt32
     let ax: AXUIElement
+    /// What the app made of the last frame request
+    var frameAnswer: FrameAnswer? = nil
     // periphery:ignore
     private let axSubscriptions: [AxSubscription] // keep subscriptions in memory
 
@@ -431,17 +442,18 @@ private func setFrame(_ window: AXUIElement, _ topLeft: CGPoint?, _ size: CGSize
     if let size { window.set(Ax.sizeAttr, size) }
 }
 
-extension AXUIElement {
-    /// Whether the window is at `topLeft` with `size`, give or take the fraction of a point apps round frames to
-    fileprivate func hasFrame(_ topLeft: CGPoint?, _ size: CGSize?) -> Bool {
-        func near(_ a: CGFloat, _ b: CGFloat) -> Bool { abs(a - b) < 1 }
-        if let topLeft {
-            guard let current = get(Ax.topLeftCornerAttr), near(current.x, topLeft.x), near(current.y, topLeft.y) else { return false }
-        }
-        if let size {
-            guard let current = get(Ax.sizeAttr), near(current.width, size.width), near(current.height, size.height) else { return false }
-        }
-        return true
+/// Writes the `missing` parts of `request`: the size first, then the position
+/// (https://github.com/nikitabobko/AeroSpace/issues/143, https://github.com/nikitabobko/AeroSpace/issues/335)
+private func write(_ missing: FrameRequest, of request: FrameRequest, to window: AXUIElement, current: Rect, _ job: RunLoopJob) throws {
+    if let size = missing.size { window.set(Ax.sizeAttr, size) }
+    guard let topLeft = missing.topLeft else { return }
+    try job.checkCancellation()
+    let sizeBeforeMove = missing.size == nil ? current.size : window.get(Ax.sizeAttr)
+    window.set(Ax.topLeftCornerAttr, topLeft)
+    // macOS shrinks a window that it moves onto a smaller monitor
+    if let size = request.size, let sizeBeforeMove, let sizeAfterMove = window.get(Ax.sizeAttr), !sizeAfterMove.isNear(sizeBeforeMove) {
+        try job.checkCancellation()
+        window.set(Ax.sizeAttr, size)
     }
 }
 

@@ -95,24 +95,24 @@ extension Window {
     }
 
     /// Moves the window of an invisible workspace onto the closet, to the spot that matches where it was on its monitor.
-    /// ``layoutFloatingWindow(_:)`` brings it back the same way
+    /// ``layoutFloatingWindow(_:)`` brings it back the same way. The first time, that needs `windowRect`, where the
+    /// window is, unless layout placed it. Returns false when it's needed
+    @discardableResult
     @MainActor
-    func parkInCloset(_ closet: Rect) async throws {
+    func parkInCloset(_ closet: Rect, windowRect: Rect? = nil) -> Bool {
         if closetOffset == nil {
-            guard let windowRect = try await getAxRect(.cancellable) else { return }
-            // Check again after the suspension point above
-            if closetOffset == nil {
-                // An app may open a new window next to its hidden ones, on the closet
-                let sourceRect = closet.contains(windowRect.topLeftCorner) ? closet : windowRect.center.monitorApproximation.visibleRect
-                let topLeft = closet.topLeft(at: sourceRect.proportion(of: windowRect.topLeftCorner), for: windowRect.size)
-                closetOffset = topLeft - closet.topLeftCorner
-                if isFloating {
-                    lastFloatingSize = windowRect.size
-                }
+            guard let windowRect = windowRect ?? lastAppliedLayoutPhysicalRect else { return false }
+            // An app may open a new window next to its hidden ones, on the closet
+            let sourceRect = closet.contains(windowRect.topLeftCorner) ? closet : windowRect.center.monitorApproximation.visibleRect
+            let topLeft = closet.topLeft(at: sourceRect.proportion(of: windowRect.topLeftCorner), for: windowRect.size)
+            closetOffset = topLeft - closet.topLeftCorner
+            if isFloating {
+                lastFloatingSize = windowRect.size
             }
         }
         // Each refresh session asks again: the frame write skips windows that are already there
         if let closetOffset { setAxFrame(closet.topLeftCorner + closetOffset, nil) }
+        return true
     }
 
     @MainActor
