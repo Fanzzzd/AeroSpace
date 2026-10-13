@@ -31,7 +31,7 @@ extension TreeNode {
                     try await window.layoutFloatingWindow(context)
                 }
             case .window(let window):
-                if window.windowId != currentlyManipulatedWithMouseWindowId {
+                if window.windowId != mouseManipulation?.windowId {
                     lastAppliedLayoutVirtualRect = virtual
                     if window.isFullscreen && window == context.workspace.rootTilingContainer.mostRecentWindowRecursive {
                         lastAppliedLayoutPhysicalRect = nil
@@ -88,9 +88,9 @@ extension Window {
         }
     }
 
-    /// The closet, or the monitor of another workspace, when the window is there
+    /// The closet, or the monitor of a workspace other than `workspace`, when the window is there
     @MainActor
-    private func sourceRect(of windowRect: Rect, for workspace: Workspace) -> Rect? {
+    private func sourceRect(of windowRect: Rect, for workspace: Workspace?) -> Rect? {
         if let closet = Closet.shared.rect, closet.contains(windowRect.topLeftCorner) { return closet }
         let monitor = windowRect.center.monitorApproximation
         return monitor.activeWorkspace == workspace ? nil : monitor.visibleRect
@@ -105,7 +105,7 @@ extension Window {
         if closetOffset == nil {
             guard let windowRect = windowRect ?? lastAppliedLayoutPhysicalRect else { return false }
             // An app may open a new window next to its hidden ones, on the closet
-            let sourceRect = closet.contains(windowRect.topLeftCorner) ? closet : windowRect.center.monitorApproximation.visibleRect
+            let sourceRect = sourceRect(of: windowRect, for: nil) ?? closet
             let topLeft = closet.topLeft(at: sourceRect.proportion(of: windowRect.topLeftCorner), for: windowRect.size)
             closetOffset = topLeft - closet.topLeftCorner
             if isFloating {

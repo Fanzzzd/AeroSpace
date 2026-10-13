@@ -56,8 +56,6 @@ struct SwapCommand: Command {
     }
 }
 
-
-
 @MainActor
 func swapWindows(mruDominant window1: Window, _ window2: Window) {
     if window1 == window2 { return }

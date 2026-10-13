@@ -7,9 +7,11 @@ private var resizeWithMouseTask: Task<(), any Error>? = nil
 func resizedObs(_: AXObserver, ax: AXUIElement, notif: CFString, _: UnsafeMutableRawPointer?) {
     let notif = notif as String
     let windowId = ax.containingWindowId()
+    let frame = ax.frame
     Task.startUnstructured { @MainActor in
         guard let token: RunSessionGuard = .isServerEnabled else { return }
         guard let windowId, let window = Window.get(byId: windowId), try await isManipulatedWithMouse(window) else {
+            if let windowId, Window.get(byId: windowId)?.isWhereAeroSpacePutIt(frame) == true { return }
             scheduleCancellableCompleteRefreshSession(.ax(notif))
             return
         }
@@ -75,7 +77,7 @@ private func resizeWithMouse(_ window: Window) async throws { // todo cover with
                     }
                 }
             }
-            if currentlyManipulatedWithMouseWindowId != window.windowId {
+            if mouseManipulation?.windowId != window.windowId {
                 mouseManipulation = MouseManipulation(windowId: window.windowId, tile: lastAppliedLayoutRect)
             }
     }

@@ -6,10 +6,12 @@ private var moveWithMouseTask: Task<(), any Error>? = nil
 
 func movedObs(_: AXObserver, ax: AXUIElement, notif: CFString, _: UnsafeMutableRawPointer?) {
     let windowId = ax.containingWindowId()
+    let frame = ax.frame
     let notif = notif as String
     Task.startUnstructured { @MainActor in
         guard let token: RunSessionGuard = .isServerEnabled else { return }
         guard let windowId, let window = Window.get(byId: windowId), try await isManipulatedWithMouse(window) else {
+            if let windowId, Window.get(byId: windowId)?.isWhereAeroSpacePutIt(frame) == true { return }
             scheduleCancellableCompleteRefreshSession(.ax(notif))
             return
         }
@@ -33,7 +35,7 @@ private func moveWithMouse(_ window: Window) async throws { // todo cover with t
              .ignoredMonitorWindowsContainer, .macosHiddenAppsWindowsContainer:
             return // Unconventional windows can't be moved with mouse
         case .tilingContainer:
-            if currentlyManipulatedWithMouseWindowId != window.windowId {
+            if mouseManipulation?.windowId != window.windowId {
                 mouseManipulation = MouseManipulation(windowId: window.windowId, tile: window.lastAppliedLayoutPhysicalRect)
             }
             // Resizing with the mouse measures from it, and a window that is being moved isn't being resized

@@ -10,6 +10,8 @@ open class Window: TreeNode, Hashable {
     var closetOffset: CGPoint? = nil
     /// The least size the app lets the window have, as far as AeroSpace has seen. See ``learnMinSize(_:)``
     var minSize: CGSize = .zero
+    /// What the app made of the last frame AeroSpace asked for. See ``answered(_:)``
+    var frameAnswer: FrameAnswer? = nil
     var isFullscreen: Bool = false
     var noOuterGapsInFullscreen: Bool = false
     var layoutReason: LayoutReason = .standard

@@ -147,30 +147,20 @@ final class MacApp: AbstractApp {
         }
     }
 
-    func setAxFrame(_ windowId: UInt32, _ topLeft: CGPoint?, _ size: CGSize?) {
-        let request = FrameRequest(topLeft: topLeft, size: size)
+    /// Writes the parts of `request` the window doesn't have, and tells the window what the app made of it
+    func setAxFrame(_ windowId: UInt32, _ request: FrameRequest, lastAnswer: FrameAnswer?) {
         setFrameJobs.removeValue(forKey: windowId)?.cancel()
-        setFrameJobs[windowId] = withAxWindowAsync(windowId, .cancellable) { [axApp] window, job in
+        setFrameJobs[windowId] = withWindowAsync(windowId, .cancellable) { [axApp] window, job in
             // Layout asks for every window's frame on every refresh session. Writing what the window already has would
-            // make the app lay it out again and post AXMoved, which starts another refresh session
-            guard let current = try AppBundle.getAxRect(window: window.ax, job: job) else { return }
-            let missing = request.missing(from: current, lastAnswer: window.frameAnswer)
+            // make the app lay it out again and post AXMoved
+            guard let current = try AppBundle.getAxRect(window: window, job: job) else { return }
+            let missing = request.missing(from: current, lastAnswer: lastAnswer)
             if missing.isEmpty { return }
             try disableAnimations(app: axApp.threadGuarded, job) {
-                try write(missing, of: request, to: window.ax, job)
+                try write(missing, of: request, to: window, job)
             }
-            guard let got = try AppBundle.getAxRect(window: window.ax, job: job) else { return }
-            window.frameAnswer = FrameAnswer(asked: request, got: got)
-            if let size {
-                // Terminals round to whole character cells, which isn't a minimum
-                let refused = CGSize(
-                    width: got.width > size.width + 32 ? got.width : 0,
-                    height: got.height > size.height + 32 ? got.height : 0,
-                )
-                if refused != .zero {
-                    Task.startUnstructured { @MainActor in Window.get(byId: windowId)?.learnMinSize(refused) }
-                }
-            }
+            guard let got = try AppBundle.getAxRect(window: window, job: job) else { return }
+            Task.startUnstructured { @MainActor in Window.get(byId: windowId)?.answered(FrameAnswer(asked: request, got: got)) }
         }
     }
 
@@ -370,13 +360,9 @@ final class MacApp: AbstractApp {
     }
 
     private func withWindowAsync(_ windowId: UInt32, _ cm: CancellationMode, _ body: @Sendable @escaping (AXUIElement, RunLoopJob) throws -> ()) -> RunLoopJob {
-        withAxWindowAsync(windowId, cm) { window, job in try body(window.ax, job) }
-    }
-
-    private func withAxWindowAsync(_ windowId: UInt32, _ cm: CancellationMode, _ body: @Sendable @escaping (AxWindow, RunLoopJob) throws -> ()) -> RunLoopJob {
         thread?.runInLoopAsync(job: RunLoopJob(cm)) { [windows] job in
             guard let window = windows.threadGuarded[windowId] else { return }
-            try? body(window, job)
+            try? body(window.ax, job)
         } ?? .cancelled
     }
 }
@@ -384,8 +370,6 @@ final class MacApp: AbstractApp {
 private final class AxWindow {
     let windowId: UInt32
     let ax: AXUIElement
-    /// What the app made of the last frame request
-    var frameAnswer: FrameAnswer? = nil
     // periphery:ignore
     private let axSubscriptions: [AxSubscription] // keep subscriptions in memory
 

@@ -34,4 +34,14 @@ final class FrameRequestTest: XCTestCase {
         let dragged = Rect(topLeftX: 400, topLeftY: 300, width: 155, height: 1073)
         assertEquals(request.missing(from: dragged, lastAnswer: answer), request)
     }
+
+    @MainActor
+    func testMoveIsAeroSpacesOwnWhenTheWindowIsWhereTheAppPutIt() {
+        setUpWorkspacesForTests()
+        let window = TestWindow.new(id: 1, parent: Workspace.get(byName: name).rootTilingContainer)
+        assertTrue(!window.isWhereAeroSpacePutIt(current))
+        window.frameAnswer = FrameAnswer(asked: FrameRequest(topLeft: CGPoint(x: 1733, y: 1152), size: nil), got: current)
+        assertTrue(window.isWhereAeroSpacePutIt(Rect(topLeftX: 1733.4, topLeftY: 1152, width: 155, height: 1073)))
+        assertTrue(!window.isWhereAeroSpacePutIt(Rect(topLeftX: 400, topLeftY: 300, width: 155, height: 1073)))
+    }
 }

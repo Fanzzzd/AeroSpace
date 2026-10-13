@@ -4,10 +4,16 @@ import Common
 /// Apps keep a window at its minimum size, and macOS has no attribute that tells it. Layout learns it when an app
 /// refuses a smaller size, and gives the window at least that much from then on, taking the room from its siblings.
 extension Window {
-    /// Learned from a frame write the app refused. `refused` is zero in a dimension the app accepted
+    /// Learned from a frame write the app answered with a larger size. A few points more is a terminal rounding to
+    /// whole character cells, which isn't a minimum
     @MainActor
-    func learnMinSize(_ refused: CGSize) {
-        let learned = CGSize(width: max(minSize.width, refused.width), height: max(minSize.height, refused.height))
+    func learnMinSize(from answer: FrameAnswer) {
+        guard let asked = answer.asked.size else { return }
+        let got = answer.got.size
+        let learned = CGSize(
+            width: got.width > asked.width + 32 ? max(minSize.width, got.width) : minSize.width,
+            height: got.height > asked.height + 32 ? max(minSize.height, got.height) : minSize.height,
+        )
         if learned == minSize { return }
         minSize = learned
         scheduleCancellableCompleteRefreshSession(.windowMinSize)

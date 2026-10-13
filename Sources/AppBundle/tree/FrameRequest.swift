@@ -33,3 +33,27 @@ extension CGPoint {
 extension CGSize {
     func isNear(_ other: CGSize) -> Bool { abs(width - other.width) < 1 && abs(height - other.height) < 1 }
 }
+
+extension Window {
+    @MainActor
+    func answered(_ answer: FrameAnswer) {
+        frameAnswer = answer
+        learnMinSize(from: answer)
+    }
+
+    /// Whether the window is where the app put it on AeroSpace's last request, so that an AXMoved or AXResized about it
+    /// is AeroSpace's own doing
+    @MainActor
+    func isWhereAeroSpacePutIt(_ frame: Rect?) -> Bool {
+        guard let frame, let got = frameAnswer?.got else { return false }
+        return frame.topLeftCorner.isNear(got.topLeftCorner) && frame.size.isNear(got.size)
+    }
+}
+
+extension AXUIElement {
+    /// Read on the app's thread
+    var frame: Rect? {
+        guard let topLeft = get(Ax.topLeftCornerAttr), let size = get(Ax.sizeAttr) else { return nil }
+        return Rect(topLeftX: topLeft.x, topLeftY: topLeft.y, width: size.width, height: size.height)
+    }
+}
