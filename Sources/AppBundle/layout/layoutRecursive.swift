@@ -41,6 +41,8 @@ extension TreeNode {
                         window.isFullscreen = false
                         window.setAxFrame(point, CGSize(width: width, height: height))
                     }
+                } else {
+                    draggedWindowTile = physicalRect
                 }
             case .tilingContainer(let container):
                 lastAppliedLayoutPhysicalRect = physicalRect

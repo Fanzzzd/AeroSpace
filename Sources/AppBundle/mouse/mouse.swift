@@ -1,6 +1,8 @@
 import AppKit
 
 @MainActor var currentlyManipulatedWithMouseWindowId: UInt32? = nil
+/// The tile of the window that is being dragged. Layout doesn't move that window, but notes where its tile is
+@MainActor var draggedWindowTile: Rect? = nil
 var isLeftMouseButtonDown: Bool { NSEvent.pressedMouseButtons == 1 }
 
 @MainActor

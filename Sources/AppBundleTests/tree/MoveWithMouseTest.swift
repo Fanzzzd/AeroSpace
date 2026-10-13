@@ -6,29 +6,54 @@ import XCTest
 final class MoveWithMouseTest: XCTestCase {
     override func setUp() async throws { setUpWorkspacesForTests() }
 
-    /// A 1200 pt wide window 1 next to a 720 pt wide window 2, window 1 being dragged right
-    private func sideBySide() -> (TilingContainer, Window) {
-        var dragged: Window! = nil
+    private func tile(_ x: CGFloat, _ width: CGFloat) -> Rect { Rect(topLeftX: x, topLeftY: 0, width: width, height: 1080) }
+
+    /// Window 1 in a 1200 pt tile, window 2 in a 720 pt tile right of it
+    private func wideAndNarrow() -> (TilingContainer, Window, Window) {
+        var wide: Window! = nil
+        var narrow: Window! = nil
         let root = Workspace.get(byName: name).rootTilingContainer.apply {
-            dragged = TestWindow.new(id: 1, parent: $0)
-            assertEquals(dragged.focusWindow(), true)
-            TestWindow.new(id: 2, parent: $0).lastAppliedLayoutPhysicalRect =
-                Rect(topLeftX: 1200, topLeftY: 0, width: 720, height: 1080)
+            wide = TestWindow.new(id: 1, parent: $0, adaptiveWeight: 1200)
+            narrow = TestWindow.new(id: 2, parent: $0, adaptiveWeight: 720)
         }
-        return (root, dragged)
+        assertEquals(wide.focusWindow(), true)
+        wide.lastAppliedLayoutPhysicalRect = tile(0, 1200)
+        narrow.lastAppliedLayoutPhysicalRect = tile(1200, 720)
+        return (root, wide, narrow)
     }
 
-    func testWindowHeldByItsRightEndDoesntSwapWhileItsCenterIsHome() {
-        // The pointer would already be over window 2
-        let (root, dragged) = sideBySide()
-        moveTilingWindow(dragged, center: CGPoint(x: 900, y: 540))
+    func testWideWindowStaysUntilItsLeadingEdgePassesTheMiddleOfTheNextTile() {
+        let (root, wide, _) = wideAndNarrow()
+        moveTilingWindow(wide, rect: tile(300, 1200), tile: tile(0, 1200))
         assertEquals(root.layoutDescription, .h_tiles([.window(1), .window(2)]))
     }
 
-    func testWindowSwapsOnceItsCenterIsOverTheOther() {
-        // The pointer may still be over window 1's tile
-        let (root, dragged) = sideBySide()
-        moveTilingWindow(dragged, center: CGPoint(x: 1300, y: 540))
+    func testWideWindowMovesOverAndKeepsItsSize() {
+        let (root, wide, _) = wideAndNarrow()
+        // Its right edge, at 1599, is past the middle of window 2's tile, at 1560. Its center is still in its own tile
+        moveTilingWindow(wide, rect: tile(400, 1200), tile: tile(0, 1200))
         assertEquals(root.layoutDescription, .h_tiles([.window(2), .window(1)]))
+        assertEquals(wide.getWeight(.h), 1200)
+    }
+
+    func testNarrowWindowMovesOverOnceItsLeftEdgePassesTheMiddleOfTheWideTile() {
+        let (root, _, narrow) = wideAndNarrow()
+        moveTilingWindow(narrow, rect: tile(700, 720), tile: tile(1200, 720))
+        assertEquals(root.layoutDescription, .h_tiles([.window(1), .window(2)]))
+        moveTilingWindow(narrow, rect: tile(500, 720), tile: tile(1200, 720))
+        assertEquals(root.layoutDescription, .h_tiles([.window(2), .window(1)]))
+        assertEquals(narrow.getWeight(.h), 720)
+    }
+
+    func testWideWindowAtTheEndMovesLeftPastOneNarrowTile() {
+        // Four narrow windows, then a wide one: the wide one moves one place after less than a narrow tile
+        let root = Workspace.get(byName: name).rootTilingContainer
+        for i in 0 ..< 4 {
+            TestWindow.new(id: UInt32(i + 1), parent: root, adaptiveWeight: 155).lastAppliedLayoutPhysicalRect = tile(CGFloat(i) * 155, 155)
+        }
+        let wide = TestWindow.new(id: 5, parent: root, adaptiveWeight: 1300)
+        assertEquals(wide.focusWindow(), true)
+        moveTilingWindow(wide, rect: tile(620 - 80, 1300), tile: tile(620, 1300))
+        assertEquals(root.layoutDescription, .h_tiles([.window(1), .window(2), .window(3), .window(5), .window(4)]))
     }
 }
