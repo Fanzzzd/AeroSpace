@@ -45,18 +45,6 @@ final class MoveWithMouseTest: XCTestCase {
         assertEquals(narrow.getWeight(.h), 720)
     }
 
-    func testWideWindowAtTheEndMovesLeftPastOneNarrowTile() {
-        // Four narrow windows, then a wide one: the wide one moves one place after less than a narrow tile
-        let root = Workspace.get(byName: name).rootTilingContainer
-        for i in 0 ..< 4 {
-            TestWindow.new(id: UInt32(i + 1), parent: root, adaptiveWeight: 155).lastAppliedLayoutPhysicalRect = tile(CGFloat(i) * 155, 155)
-        }
-        let wide = TestWindow.new(id: 5, parent: root, adaptiveWeight: 1300)
-        assertEquals(wide.focusWindow(), true)
-        moveTilingWindow(wide, rect: tile(620 - 80, 1300), tile: tile(620, 1300))
-        assertEquals(root.layoutDescription, .h_tiles([.window(1), .window(2), .window(3), .window(5), .window(4)]))
-    }
-
     /// Four narrow windows, then a wide one
     private func fourNarrowAndAWideOne() -> (TilingContainer, [Window]) {
         let root = Workspace.get(byName: name).rootTilingContainer
@@ -91,5 +79,23 @@ final class MoveWithMouseTest: XCTestCase {
         // The left edge, at 300, is past the middles of tiles 3 and 4, at 387 and 542, not of tile 2, at 232
         moveTilingWindow(windows[4], rect: tile(300, 1300), tile: tile(620, 1300))
         assertEquals(root.layoutDescription, .h_tiles([.window(1), .window(2), .window(5), .window(3), .window(4)]))
+    }
+
+    func testWindowDraggedIntoTheNextColumnGoesNextToTheWindowThere() {
+        // Window 1 left, a column of windows 2 and 3 right. Window 3 is dragged left, past the middle of window 1
+        var dragged: Window! = nil
+        let root = Workspace.get(byName: name).rootTilingContainer.apply {
+            TestWindow.new(id: 1, parent: $0).lastAppliedLayoutPhysicalRect = Rect(topLeftX: 0, topLeftY: 0, width: 960, height: 1080)
+            TilingContainer.newVTiles(parent: $0, adaptiveWeight: 1).apply {
+                TestWindow.new(id: 2, parent: $0).lastAppliedLayoutPhysicalRect = Rect(topLeftX: 960, topLeftY: 0, width: 960, height: 540)
+                dragged = TestWindow.new(id: 3, parent: $0)
+            }
+        }
+        assertEquals(dragged.focusWindow(), true)
+        let tile = Rect(topLeftX: 960, topLeftY: 540, width: 960, height: 540)
+        moveTilingWindow(dragged, rect: Rect(topLeftX: 600, topLeftY: 540, width: 960, height: 540), tile: tile)
+        assertEquals(root.layoutDescription, .h_tiles([.window(1), .v_tiles([.window(2), .window(3)])]))
+        moveTilingWindow(dragged, rect: Rect(topLeftX: 400, topLeftY: 540, width: 960, height: 540), tile: tile)
+        assertEquals(root.layoutDescription, .h_tiles([.window(3), .window(1), .v_tiles([.window(2)])]))
     }
 }

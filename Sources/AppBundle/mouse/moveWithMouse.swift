@@ -36,6 +36,7 @@ private func moveWithMouse(_ window: Window) async throws { // todo cover with t
             if currentlyManipulatedWithMouseWindowId != window.windowId {
                 mouseManipulation = MouseManipulation(windowId: window.windowId, tile: window.lastAppliedLayoutPhysicalRect)
             }
+            // Resizing with the mouse measures from it, and a window that is being moved isn't being resized
             window.lastAppliedLayoutPhysicalRect = nil
             guard let rect = try await window.getAxRect(.cancellable), let tile = mouseManipulation?.tile else { return }
             moveTilingWindow(window, rect: rect, tile: tile)
@@ -52,19 +53,19 @@ private func moveFloatingWindow(_ window: Window) async throws {
     }
 }
 
-/// Puts a tiling window that is being dragged where it is now, at `rect`, away from its `tile`:
-/// - Onto another monitor: next to the window under its center.
-/// - Along its container: like an item in a list. The edge on the side it is dragged to leads; for each tile whose
-///   middle that edge has passed, the window moves one place, keeping its size while the others make room. An edge off
-///   the screen has passed them all.
-/// - Across its container, such as into the next column: in the place of the window there, once the leading edge has
-///   passed the middle of that window's tile
+/// Puts a tiling window that is being dragged where it is now, at `rect`, away from its `tile`. The window keeps its
+/// size; the others make room:
+/// - Along its container, it moves like an item in a list. The edge on the side it is dragged to leads; for each tile
+///   whose middle that edge has passed, the window moves one place. An edge off the screen has passed them all.
+/// - Across its container, such as into the next column, it goes next to the window there, once the leading edge has
+///   passed the middle of that window's tile.
+/// - Onto another monitor, it goes next to the window under its center
 @MainActor
 func moveTilingWindow(_ window: Window, rect: Rect, tile: Rect) {
     let center = rect.center
-    let targetWorkspace = center.monitorApproximation.activeWorkspace
-    if targetWorkspace != window.nodeWorkspace {
-        moveTilingWindow(window, to: targetWorkspace, center: center)
+    let workspace = center.monitorApproximation.activeWorkspace
+    if workspace != window.nodeWorkspace {
+        insert(window, at: center, in: workspace)
         return
     }
     let offset = center - tile.center
@@ -87,48 +88,41 @@ func moveTilingWindow(_ window: Window, rect: Rect, tile: Rect) {
     }
 
     // Kept on the monitor, so that an edge off the screen still finds the tile at the screen's edge
-    let monitor = targetWorkspace.workspaceMonitor.visibleRect
     let probe = (orientation == .h
         ? CGPoint(x: forward ? leadingEdge - 1 : leadingEdge, y: center.y)
         : CGPoint(x: center.x, y: forward ? leadingEdge - 1 : leadingEdge))
-        .clamped(to: monitor)
-    guard let target = probe.findWindowRecursively(in: targetWorkspace.rootTilingContainer, virtual: false, fullscreenCoversAll: false),
-          target != window,
-          let middle = target.lastAppliedLayoutPhysicalRect?.center.getProjection(orientation),
+        .clamped(to: workspace.workspaceMonitor.visibleRect)
+    guard let middle = probe.windowUnder(in: workspace, except: window)?.lastAppliedLayoutPhysicalRect?.center.getProjection(orientation),
           forward ? leadingEdge >= middle : leadingEdge <= middle
     else { return }
-    swapWindows(mruDominant: window, target)
+    insert(window, at: probe, in: workspace)
 }
 
-/// Next to the window under `center` on the other monitor, on the side `center` is
+/// Puts the window next to the one at `point`, on the side of that one's middle `point` is. With no window there, the
+/// window goes first in the workspace
 @MainActor
-private func moveTilingWindow(_ window: Window, to workspace: Workspace, center: CGPoint) {
-    let target = center.findWindowRecursively(in: workspace.rootTilingContainer, virtual: false, fullscreenCoversAll: false)
-    let index: Int = if let target, let parent = target.parent as? TilingContainer, let targetRect = target.lastAppliedLayoutPhysicalRect {
-        center.getProjection(parent.orientation) >= targetRect.center.getProjection(parent.orientation)
-            ? target.ownIndex.orDie() + 1
-            : target.ownIndex.orDie()
-    } else {
-        0
+private func insert(_ window: Window, at point: CGPoint, in workspace: Workspace) {
+    guard let target = point.windowUnder(in: workspace, except: window),
+          let parent = target.parent as? TilingContainer,
+          let middle = target.lastAppliedLayoutPhysicalRect?.center.getProjection(parent.orientation)
+    else {
+        window.bind(to: workspace.rootTilingContainer, adaptiveWeight: WEIGHT_AUTO, index: 0)
+        return
     }
-    window.bind(to: target?.parent ?? workspace.rootTilingContainer, adaptiveWeight: WEIGHT_AUTO, index: index)
+    _ = window.unbindFromParent()
+    let index = target.ownIndex.orDie() + (point.getProjection(parent.orientation) >= middle ? 1 : 0)
+    window.bind(to: parent, adaptiveWeight: WEIGHT_AUTO, index: index)
 }
 
 extension CGPoint {
+    @MainActor
+    fileprivate func windowUnder(in workspace: Workspace, except window: Window) -> Window? {
+        findWindowRecursively(in: workspace.rootTilingContainer, virtual: false, fullscreenCoversAll: false)?.takeIf { $0 != window }
+    }
+
     fileprivate func clamped(to rect: Rect) -> CGPoint {
         CGPoint(x: x.coerce(in: rect.minX ... rect.maxX - 1), y: y.coerce(in: rect.minY ... rect.maxY - 1))
     }
-}
-
-@MainActor
-func swapWindows(mruDominant window1: Window, _ window2: Window) {
-    if window1 == window2 { return }
-
-    let binding2 = window2.unbindFromParent()
-    let binding1 = window1.unbindFromParent()
-
-    window2.bind(to: binding1.parent, adaptiveWeight: binding1.adaptiveWeight, index: binding1.index)
-    window1.bind(to: binding2.parent, adaptiveWeight: binding2.adaptiveWeight, index: binding2.index)
 }
 
 extension CGPoint {
