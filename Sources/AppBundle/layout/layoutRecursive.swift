@@ -130,33 +130,45 @@ extension TilingContainer {
         var point = point
         var virtualPoint = virtual.topLeftCorner
 
-        guard let delta = ((orientation == .h ? width : height) - CGFloat(children.sumOfDouble { $0.getWeight(orientation) }))
-            .div(children.count) else { return }
+        let total = orientation == .h ? width : height
+        guard let delta = (total - CGFloat(children.sumOfDouble { $0.getWeight(orientation) })).div(children.count) else { return }
+        for child in children {
+            child.setWeight(orientation, child.getWeight(orientation) + delta)
+        }
 
         let lastIndex = children.indices.last
+        let rawGap = context.resolvedGaps.inner.get(orientation).toDouble()
+        // Gaps. Consider 4 cases:
+        // 1. Multiple children. Layout first child
+        // 2. Multiple children. Layout last child
+        // 3. Multiple children. Layout child in the middle
+        // 4. Single child
+        let gaps = children.indices.map { i in rawGap - (i == 0 ? rawGap / 2 : 0) - (i == lastIndex ? rawGap / 2 : 0) }
+        // The weights are what the user asked for. Tiles get less only where an app refuses to make its window smaller
+        let lengths = fitLengths(
+            children.map { $0.getWeight(orientation) },
+            minimums: children.indices.map { children[$0].minLength(orientation, innerGap: rawGap) + gaps[$0] },
+            total: total,
+        )
+        // When the minimums don't fit, tiles overlap evenly, so that the last still ends at the edge
+        let excess: CGFloat = lengths.reduce(0, +) - total
+        let overlap: CGFloat = max(excess, 0) / CGFloat(max(children.count - 1, 1))
+
         for (i, child) in children.enumerated() {
-            child.setWeight(orientation, child.getWeight(orientation) + delta)
-            let rawGap = context.resolvedGaps.inner.get(orientation).toDouble()
-            // Gaps. Consider 4 cases:
-            // 1. Multiple children. Layout first child
-            // 2. Multiple children. Layout last child
-            // 3. Multiple children. Layout child in the middle
-            // 4. Single child   let rawGap = gaps.inner.get(orientation).toDouble()
-            let gap = rawGap - (i == 0 ? rawGap / 2 : 0) - (i == lastIndex ? rawGap / 2 : 0)
             try await child.layoutRecursive(
                 i == 0 ? point : point.addingOffset(orientation, rawGap / 2),
-                width: orientation == .h ? child.hWeight - gap : width,
-                height: orientation == .v ? child.vWeight - gap : height,
+                width: orientation == .h ? lengths[i] - gaps[i] : width,
+                height: orientation == .v ? lengths[i] - gaps[i] : height,
                 virtual: Rect(
                     topLeftX: virtualPoint.x,
                     topLeftY: virtualPoint.y,
-                    width: orientation == .h ? child.hWeight : width,
-                    height: orientation == .v ? child.vWeight : height,
+                    width: orientation == .h ? lengths[i] : width,
+                    height: orientation == .v ? lengths[i] : height,
                 ),
                 context,
             )
-            virtualPoint = orientation == .h ? virtualPoint.addingXOffset(child.hWeight) : virtualPoint.addingYOffset(child.vWeight)
-            point = orientation == .h ? point.addingXOffset(child.hWeight) : point.addingYOffset(child.vWeight)
+            virtualPoint = virtualPoint.addingOffset(orientation, lengths[i] - overlap)
+            point = point.addingOffset(orientation, lengths[i] - overlap)
         }
     }
 

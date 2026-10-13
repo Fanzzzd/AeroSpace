@@ -156,6 +156,16 @@ final class MacApp: AbstractApp {
             try disableAnimations(app: axApp.threadGuarded, job) {
                 try setFrame(window, topLeft, size, job)
             }
+            if let size, let actual = window.get(Ax.sizeAttr) {
+                // Terminals round to whole character cells, which isn't a minimum
+                let refused = CGSize(
+                    width: actual.width > size.width + 32 ? actual.width : 0,
+                    height: actual.height > size.height + 32 ? actual.height : 0,
+                )
+                if refused != .zero {
+                    Task.startUnstructured { @MainActor in Window.get(byId: windowId)?.learnMinSize(refused) }
+                }
+            }
         }
     }
 

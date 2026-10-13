@@ -95,6 +95,7 @@ public enum RefreshSessionEvent: Sendable, CustomStringConvertible {
     case resetManipulatedWithMouse
     case ax(String)
     case focusFollowsMouse
+    case windowMinSize
 
     public var isStartup: Bool {
         if case .startup = self { return true } else { return false }
@@ -108,6 +109,7 @@ public enum RefreshSessionEvent: Sendable, CustomStringConvertible {
         switch self {
             case .ax(let str): "ax(\(str))"
             case .configAutoReload: "configAutoReload"
+            case .windowMinSize: "windowMinSize"
             case .globalObserver(let str): "globalObserver(\(str))"
             case .globalObserverLeftMouseUp: "globalObserverLeftMouseUp"
             case .hotkeyBinding: "hotkeyBinding"

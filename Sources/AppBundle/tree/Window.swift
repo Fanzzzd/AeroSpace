@@ -8,6 +8,8 @@ open class Window: TreeNode, Hashable {
     /// Where the window waits on the closet while its workspace is invisible, from the closet's top left corner. Nil
     /// while its workspace is visible
     var closetOffset: CGPoint? = nil
+    /// The least size the app lets the window have, as far as AeroSpace has seen. See ``learnMinSize(_:)``
+    var minSize: CGSize = .zero
     var isFullscreen: Bool = false
     var noOuterGapsInFullscreen: Bool = false
     var layoutReason: LayoutReason = .standard
