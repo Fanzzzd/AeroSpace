@@ -88,7 +88,7 @@ extension NSScreen {
     fileprivate var rect: Rect { frame.monitorFrameNormalized() }
 
     /// Same as ``rect`` but for ``visibleFrame``
-    fileprivate var visibleRect: Rect { visibleFrame.monitorFrameNormalized() }
+    var visibleRect: Rect { visibleFrame.monitorFrameNormalized() }
 }
 
 private let testMonitorRect = Rect(topLeftX: 0, topLeftY: 0, width: 1920, height: 1080)

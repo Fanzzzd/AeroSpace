@@ -29,11 +29,13 @@ final class Closet {
     private static let name = "AeroSpace Closet"
     private static let vendorId: UInt32 = 0x4145 // "AE"
 
-    /// Where hidden windows go, in AeroSpace coordinates. Nil when the closet couldn't be made, or when it's the main
-    /// display, which happens when it's the only one left or the user picks it in System Settings
+    /// Where hidden windows go, in AeroSpace coordinates: below the closet's menu bar, which macOS keeps windows out of.
+    /// Nil when the closet couldn't be made, or when it's the main display, which happens when it's the only one left or
+    /// the user picks it in System Settings
     var rect: Rect? {
         guard let displayId, CGDisplayIsMain(displayId) == 0 else { return nil }
-        return CGDisplayBounds(displayId).asTopLeftRect
+        // The closet's NSScreen may show up only after a reconfiguration
+        return NSScreen.screens.first { $0.displayId == displayId }?.visibleRect ?? CGDisplayBounds(displayId).asTopLeftRect
     }
 
     /// The main display is never the closet: AeroSpace needs at least one monitor
@@ -180,9 +182,9 @@ final class Closet {
     }
 
     private func pushPointerOut() {
-        guard let rect, let event = CGEvent(source: nil) else { return }
+        guard let displayId, CGDisplayIsMain(displayId) == 0, let event = CGEvent(source: nil) else { return }
         let point = event.location
-        if !rect.contains(point) { return }
+        if !CGDisplayBounds(displayId).contains(point) { return }
         let nearest = Self.otherDisplayBounds.min { $0.distance(to: point) < $1.distance(to: point) }
         guard let nearest else { return }
         ClosetLog.write("pointer: pushed out of the closet from \(point)")
