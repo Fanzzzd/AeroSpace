@@ -53,6 +53,7 @@ final class Closet {
         let width = min(Int(size.width), 8192)
         let height = min(Int(size.height), 8192)
         ClosetLog.startWatchdog()
+        PerfStats.start()
         ClosetLog.write("open: making a \(width)x\(height) closet; displays \(Self.describeDisplays()), load \(ClosetLog.loadAverage)")
         let making = DispatchTime.now()
         let made = Self.makeDisplay(width: width, height: height)

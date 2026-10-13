@@ -149,7 +149,10 @@ final class MacApp: AbstractApp {
 
     func setAxFrame(_ windowId: UInt32, _ topLeft: CGPoint?, _ size: CGSize?) {
         setFrameJobs.removeValue(forKey: windowId)?.cancel()
+        let appName = name ?? "?"
         setFrameJobs[windowId] = withWindowAsync(windowId, .cancellable) { [axApp] window, job in
+            let started = DispatchTime.now()
+            defer { PerfStats.frame(appName, ms: ClosetLog.milliseconds(since: started)) }
             try disableAnimations(app: axApp.threadGuarded, job) {
                 try setFrame(window, topLeft, size, job)
             }
@@ -424,6 +427,7 @@ private func setFrame(_ window: AXUIElement, _ topLeft: CGPoint?, _ size: CGSize
 private func disableAnimations<T>(app: AXUIElement, _ job: RunLoopJob, _ body: () throws -> T) throws -> T {
     let wasEnabled = app.get(Ax.enhancedUserInterfaceAttr) == true
     if wasEnabled {
+        PerfStats.enhancedUserInterfaceToggled()
         app.set(Ax.enhancedUserInterfaceAttr, false)
     }
     defer {

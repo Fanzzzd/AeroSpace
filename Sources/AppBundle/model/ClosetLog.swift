@@ -94,3 +94,60 @@ enum ClosetLog {
         watchdog.withLock { $0 = timer }
     }
 }
+
+/// Counts what AeroSpace spends its time on, written to the closet log once a minute: refresh sessions by event, and
+/// window frame changes by app, with how long the app took to answer
+enum PerfStats {
+    private struct Tally {
+        var count = 0
+        var totalMs = 0
+        var maxMs = 0
+        mutating func add(_ ms: Int) {
+            count += 1
+            totalMs += ms
+            maxMs = max(maxMs, ms)
+        }
+        var text: String { "\(count)x \(totalMs) ms (max \(maxMs))" }
+    }
+
+    private static let state = OSAllocatedUnfairLock<(refresh: [String: Tally], frames: [String: Tally], skipped: Int, eui: Int)>(
+        initialState: ([:], [:], 0, 0),
+    )
+    private static let reporter = OSAllocatedUnfairLock<DispatchSourceTimer?>(initialState: nil)
+
+    static func refresh(_ event: String, ms: Int) {
+        state.withLock { $0.refresh[event, default: Tally()].add(ms) }
+        if ms >= 100 { ClosetLog.write("perf: refresh \(event) took \(ms) ms") }
+    }
+
+    static func frame(_ app: String, ms: Int) {
+        state.withLock { $0.frames[app, default: Tally()].add(ms) }
+        if ms >= 100 { ClosetLog.write("perf: \(app) took \(ms) ms to move a window") }
+    }
+
+    /// An app had AXEnhancedUserInterface on, so moving its window switched it off and on again
+    static func enhancedUserInterfaceToggled() {
+        state.withLock { $0.eui += 1 }
+    }
+
+    static func skippedFrame() {
+        state.withLock { $0.skipped += 1 }
+    }
+
+    static func start() {
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        timer.schedule(deadline: .now() + 60, repeating: 60)
+        timer.setEventHandler {
+            let (refresh, frames, skipped, eui) = state.withLock { s in
+                defer { s = ([:], [:], 0, 0) }
+                return s
+            }
+            if refresh.isEmpty && frames.isEmpty { return }
+            let r = refresh.sorted { $0.value.totalMs > $1.value.totalMs }.map { "\($0.key) \($0.value.text)" }
+            let f = frames.sorted { $0.value.totalMs > $1.value.totalMs }.map { "\($0.key) \($0.value.text)" }
+            ClosetLog.write("perf minute: refresh [\(r.joined(separator: ", "))]; frames [\(f.joined(separator: ", "))]; frames skipped \(skipped); enhanced UI toggled \(eui)")
+        }
+        timer.resume()
+        reporter.withLock { $0 = timer }
+    }
+}

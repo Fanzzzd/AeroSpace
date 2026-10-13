@@ -30,6 +30,8 @@ func runHeavyCompleteRefreshSession(
     let state = signposter.beginInterval(#function, "event: \(event) axTaskLocalAppThreadToken: \(axTaskLocalAppThreadToken?.idForDebug)")
     defer { signposter.endInterval(#function, state) }
     if !TrayMenuModel.shared.isEnabled { return }
+    let refreshStarted = DispatchTime.now()
+    defer { PerfStats.refresh("\(event)".prefix(40).description, ms: ClosetLog.milliseconds(since: refreshStarted)) }
     let res = await Result {
         try await $refreshSessionEvent.withValue(event) {
             let nativeFocused = try await getNativeFocusedWindow(.cancellable)
