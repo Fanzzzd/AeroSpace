@@ -22,7 +22,7 @@ private func normalizeIgnoredMonitorWindows() async throws {
         }
     }
     if ignoredRects.isEmpty { return }
-    // Windows of invisible workspaces are parked in monitor corners and may overlap an ignored monitor.
+    // Windows of invisible workspaces are on the closet, or where they were if AeroSpace couldn't make the closet.
     // Only windows of visible workspaces can be where they appear to be.
     for workspace in Workspace.all where workspace.isVisible {
         for window in workspace.allLeafWindowsRecursive where window.layoutReason == .standard {

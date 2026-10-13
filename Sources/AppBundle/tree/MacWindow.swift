@@ -129,7 +129,9 @@ final class MacWindow: Window {
             // Check for isHiddenInCloset for the second time because of the suspension point above
             if !isHiddenInCloset {
                 let topLeftCorner = windowRect.topLeftCorner
-                let monitorRect = windowRect.center.monitorApproximation.rect // Similar to layoutFloatingWindow. Non idempotent
+                // Similar to layoutFloatingWindow. Non idempotent. A window that is on the closet already (an app may open a
+                // new window next to its hidden ones) is placed relative to the closet
+                let monitorRect = closet.takeIf { $0.contains(windowRect.center) } ?? windowRect.center.monitorApproximation.rect
                 let absolutePoint = topLeftCorner - monitorRect.topLeftCorner
                 prevUnhiddenProportionalPositionInsideWorkspaceRect =
                     CGPoint(x: absolutePoint.x / monitorRect.width, y: absolutePoint.y / monitorRect.height)

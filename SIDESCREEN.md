@@ -39,6 +39,8 @@ This branch moves those windows to a virtual display of its own instead, the clo
 - The closet sits diagonally off the bottom-right corner of the monitors. AeroSpace moves the pointer back if it gets
   there. It isn't a monitor for AeroSpace: no workspace, not in `list-monitors`.
 - If AeroSpace crashes, macOS moves the windows on the closet to the remaining monitors.
+- The closet shows in System Settings > Displays as "AeroSpace Closet". The virtual display API has no option to hide
+  it there. If the closet becomes the main display, AeroSpace stops hiding windows until another display is main.
 
 The closet is made with the private `CGVirtualDisplay` API. It is kept in this fork only, not proposed upstream.
 
