@@ -33,7 +33,12 @@ private func moveWithMouse(_ window: Window) async throws { // todo cover with t
              .ignoredMonitorWindowsContainer, .macosHiddenAppsWindowsContainer:
             return // Unconventional windows can't be moved with mouse
         case .tilingContainer:
-            moveTilingWindow(window)
+            currentlyManipulatedWithMouseWindowId = window.windowId
+            window.lastAppliedLayoutPhysicalRect = nil
+            // Where the window is, not where the pointer holds it: a wide window held by one end would swap too late
+            // one way and too early the other
+            guard let center = try await window.getCenter(.cancellable) else { return }
+            moveTilingWindow(window, center: center)
         case .unbound: return
     }
 }
@@ -47,18 +52,17 @@ private func moveFloatingWindow(_ window: Window) async throws {
     }
 }
 
+/// Puts a tiling window that is being dragged where its center is: in place of the window there, or next to it on
+/// another monitor
 @MainActor
-private func moveTilingWindow(_ window: Window) {
-    currentlyManipulatedWithMouseWindowId = window.windowId
-    window.lastAppliedLayoutPhysicalRect = nil
-    let mouseLocation = mouseLocation
-    let targetWorkspace = mouseLocation.monitorApproximation.activeWorkspace
-    let swapTarget = mouseLocation
+func moveTilingWindow(_ window: Window, center: CGPoint) {
+    let targetWorkspace = center.monitorApproximation.activeWorkspace
+    let swapTarget = center
         .findWindowRecursively(in: targetWorkspace.rootTilingContainer, virtual: false, fullscreenCoversAll: false)?
         .takeIf { $0 != window }
     if targetWorkspace != window.nodeWorkspace { // Move window to a different monitor
         let index: Int = if let swapTarget, let parent = swapTarget.parent as? TilingContainer, let targetRect = swapTarget.lastAppliedLayoutPhysicalRect {
-            mouseLocation.getProjection(parent.orientation) >= targetRect.center.getProjection(parent.orientation)
+            center.getProjection(parent.orientation) >= targetRect.center.getProjection(parent.orientation)
                 ? swapTarget.ownIndex.orDie() + 1
                 : swapTarget.ownIndex.orDie()
         } else {
