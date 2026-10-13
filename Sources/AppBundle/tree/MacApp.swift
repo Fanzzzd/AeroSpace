@@ -156,7 +156,7 @@ final class MacApp: AbstractApp {
             guard let current = try AppBundle.getAxRect(window: window, job: job) else { return }
             let missing = request.missing(from: current, lastAnswer: lastAnswer)
             if missing.isEmpty { return }
-            try disableAnimations(app: axApp.threadGuarded, job) {
+            try disableAnimations(app: axApp, job, restore: .afterQueuedJobs) {
                 try write(missing, of: request, to: window, job)
             }
             guard let got = try AppBundle.getAxRect(window: window, job: job) else { return }
@@ -168,7 +168,7 @@ final class MacApp: AbstractApp {
         setFrameJobs.removeValue(forKey: windowId)?.cancel()
         let semaphore = DispatchSemaphore(value: 0)
         let job = withWindowAsync(windowId, .nonCancellable) { [axApp] window, job in
-            try? disableAnimations(app: axApp.threadGuarded, job) {
+            try? disableAnimations(app: axApp, job, restore: .now) {
                 try setFrame(window, topLeft, size, job)
             }
             semaphore.signal()
@@ -265,18 +265,18 @@ final class MacApp: AbstractApp {
     }
 
     @MainActor
-    static func refreshAllAndGetAliveWindowIds(frontmostAppBundleId: String?) async throws -> [MacApp: [UInt32]] {
+    static func refreshAllAndGetAliveWindows(frontmostAppBundleId: String?) async throws -> [MacApp: [UInt32: MacosWindowState]] {
         for (_, app) in MacApp.allAppsMap { // gc dead apps
             try checkCancellation()
             if app.nsApp.isTerminated {
                 await app.destroy()
             }
         }
-        return try await withThrowingTaskGroup(of: (pid_t, [UInt32]).self, returning: [MacApp: [UInt32]].self) { group in
+        return try await withThrowingTaskGroup(of: (pid_t, [UInt32: MacosWindowState]).self, returning: [MacApp: [UInt32: MacosWindowState]].self) { group in
             func refreshTheApp(_ nsApp: NSRunningApplication) {
                 group.addTask { @Sendable @MainActor in
-                    guard let app = try await MacApp.getOrRegister(nsApp) else { return (nsApp.processIdentifier, []) }
-                    return (nsApp.processIdentifier, try await app.refreshAndGetAliveWindowIds(frontmostAppBundleId: frontmostAppBundleId))
+                    guard let app = try await MacApp.getOrRegister(nsApp) else { return (nsApp.processIdentifier, [:]) }
+                    return (nsApp.processIdentifier, try await app.refreshAndGetAliveWindows(frontmostAppBundleId: frontmostAppBundleId))
                 }
             }
             // Register new apps
@@ -295,23 +295,25 @@ final class MacApp: AbstractApp {
                     refreshTheApp(app.nsApp)
                 }
             }
-            var result: [MacApp: [UInt32]] = [:]
-            for try await (pid, windowIds) in group {
+            var result: [MacApp: [UInt32: MacosWindowState]] = [:]
+            for try await (pid, windows) in group {
                 if let app = MacApp.allAppsMap[pid] {
-                    result[app] = windowIds
+                    result[app] = windows
                 }
             }
             return result
         }
     }
 
-    private func refreshAndGetAliveWindowIds(frontmostAppBundleId: String?) async throws -> [UInt32] {
+    /// The app's windows, with their macOS state read in the same pass, so that ``normalizeLayoutReason()`` doesn't ask
+    /// each window on its own
+    private func refreshAndGetAliveWindows(frontmostAppBundleId: String?) async throws -> [UInt32: MacosWindowState] {
         if nsApp.isTerminated {
             await destroy()
-            return []
+            return [:]
         }
-        guard let thread else { return [] }
-        let (alive, dead) = try await thread.runInLoop(.cancellable) { [nsApp, windows, axApp] (job) -> ([UInt32], [UInt32]) in
+        guard let thread else { return [:] }
+        let (alive, dead) = try await thread.runInLoop(.cancellable) { [nsApp, windows, axApp] (job) -> ([UInt32: MacosWindowState], [UInt32]) in
             var alive: [UInt32: AxWindow] = windows.threadGuarded
             var dead = [UInt32: AxWindow]()
             // Second line of defence against lock screen. See the first line of defence: closedWindowsCache
@@ -329,7 +331,12 @@ final class MacApp: AbstractApp {
             }
 
             windows.threadGuarded = alive
-            return (Array(alive.keys), Array(dead.keys))
+            let states = try alive.mapValues { window in
+                try job.checkCancellation()
+                let isFullscreen = window.ax.get(Ax.isFullscreenAttr) == true
+                return MacosWindowState(isFullscreen: isFullscreen, isMinimized: !isFullscreen && window.ax.get(Ax.minimizedAttr) == true)
+            }
+            return (states, Array(dead.keys))
         }
         windowsCount = alive.count
         for windowId in dead {
@@ -443,16 +450,33 @@ private func write(_ missing: FrameRequest, of request: FrameRequest, to window:
 // Some undocumented magic
 // References: https://github.com/koekeishiya/yabai/commit/3fe4c77b001e1a4f613c26f01ea68c0f09327f3a
 //             https://github.com/rxhanson/Rectangle/pull/285
-private func disableAnimations<T>(app: AXUIElement, _ job: RunLoopJob, _ body: () throws -> T) throws -> T {
-    let wasEnabled = app.get(Ax.enhancedUserInterfaceAttr) == true
+/// Apps animate a window that is moved while their AXEnhancedUserInterface is on, so it is turned off for the move.
+/// Chromium-based apps rebuild their accessibility tree each time it changes, so with `.afterQueuedJobs` it is turned
+/// back on once, after the moves already queued on the app's thread, not after each one
+private func disableAnimations<T>(
+    app: ThreadGuardedValue<AXUIElement>,
+    _ job: RunLoopJob,
+    restore: EnhancedUserInterfaceRestore,
+    _ body: () throws -> T,
+) throws -> T {
+    let wasEnabled = app.threadGuarded.get(Ax.enhancedUserInterfaceAttr) == true
     if wasEnabled {
-        app.set(Ax.enhancedUserInterfaceAttr, false)
+        app.threadGuarded.set(Ax.enhancedUserInterfaceAttr, false)
     }
     defer {
         if wasEnabled {
-            app.set(Ax.enhancedUserInterfaceAttr, true)
+            switch restore {
+                case .now:
+                    app.threadGuarded.set(Ax.enhancedUserInterfaceAttr, true)
+                case .afterQueuedJobs:
+                    _ = Thread.current.runInLoopAsync(job: RunLoopJob(.nonCancellable)) { _ in
+                        app.threadGuarded.set(Ax.enhancedUserInterfaceAttr, true)
+                    }
+            }
         }
     }
     try job.checkCancellation()
     return try body()
 }
+
+private enum EnhancedUserInterfaceRestore { case now, afterQueuedJobs }

@@ -12,6 +12,8 @@ open class Window: TreeNode, Hashable {
     var minSize: CGSize = .zero
     /// What the app made of the last frame AeroSpace asked for. See ``answered(_:)``
     var frameAnswer: FrameAnswer? = nil
+    /// Read by the refresh session for every window at once. See ``macosState(_:)``
+    var refreshedMacosState: MacosWindowState? = nil
     var isFullscreen: Bool = false
     var noOuterGapsInFullscreen: Bool = false
     var layoutReason: LayoutReason = .standard
@@ -75,4 +77,24 @@ extension Window {
     }
 
     func asMacWindow() -> MacWindow { self as! MacWindow }
+}
+
+/// Whether macOS shows a window fullscreen or minimized
+struct MacosWindowState: Sendable {
+    let isFullscreen: Bool
+    let isMinimized: Bool
+}
+
+extension Window {
+    /// What the refresh session read, once, or else asked now
+    @MainActor
+    func macosState(_ cm: CancellationMode) async throws -> MacosWindowState {
+        if let refreshedMacosState {
+            self.refreshedMacosState = nil
+            return refreshedMacosState
+        }
+        let isFullscreen = try await isMacosFullscreen(cm)
+        let isMinimized = isFullscreen ? false : try await isMacosMinimized(cm)
+        return MacosWindowState(isFullscreen: isFullscreen, isMinimized: isMinimized)
+    }
 }
