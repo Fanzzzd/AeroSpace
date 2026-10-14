@@ -148,13 +148,18 @@ final class MacApp: AbstractApp {
     }
 
     /// Writes the parts of `request` the window doesn't have, and tells the window how it went, however it went
-    func setAxFrame(_ windowId: UInt32, _ request: FrameRequest, lastAnswer: FrameAnswer?) {
+    func setAxFrame(_ windowId: UInt32, _ pending: PendingFrameRequest, lastAnswer: FrameAnswer?) {
+        let request = pending.request
         setFrameJobs.removeValue(forKey: windowId)?.cancel()
-        setFrameJobs[windowId] = thread?.runInLoopAsync(job: RunLoopJob(.cancellable), autoCheckCancelled: false) { [axApp, windows] job in
+        guard let thread else {
+            Task.startUnstructured { @MainActor in Window.get(byId: windowId)?.frameWritten(pending, got: nil) }
+            return
+        }
+        setFrameJobs[windowId] = thread.runInLoopAsync(job: RunLoopJob(.cancellable), autoCheckCancelled: false) { [axApp, windows] job in
             var got: Rect? = nil
             defer {
                 let got = got
-                Task.startUnstructured { @MainActor in Window.get(byId: windowId)?.frameWritten(request, got: got) }
+                Task.startUnstructured { @MainActor in Window.get(byId: windowId)?.frameWritten(pending, got: got) }
             }
             guard let window = windows.threadGuarded[windowId]?.ax else { return }
             got = try? {
@@ -168,7 +173,7 @@ final class MacApp: AbstractApp {
                 }
                 return try AppBundle.getAxRect(window: window, job: job)
             }()
-        } ?? .cancelled
+        }
     }
 
     func setAxFrameForTermination(_ windowId: UInt32, _ topLeft: CGPoint?, _ size: CGSize?) {

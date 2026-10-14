@@ -13,7 +13,8 @@ open class Window: TreeNode, Hashable {
     /// What the app made of the last frame AeroSpace asked for, until something else moves the window
     var frameAnswer: FrameAnswer? = nil
     /// The frame AeroSpace is asking for now. See ``frameWritten(_:got:)``
-    var pendingFrameRequest: FrameRequest? = nil
+    var pendingFrameRequest: PendingFrameRequest? = nil
+    var frameRequestCount = 0
     /// Read by the refresh session for every window at once. See ``macosState(_:)``
     var refreshedMacosState: MacosWindowState? = nil
     var isFullscreen: Bool = false

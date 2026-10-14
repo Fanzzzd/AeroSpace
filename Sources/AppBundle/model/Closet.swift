@@ -91,6 +91,8 @@ final class Closet {
     private var labeled = false
 
     private func displaysChanged() {
+        // macOS may move windows with the displays without telling: write their frames again rather than trust them
+        for window in MacWindow.allWindows { window.frameAnswer = nil }
         place()
         // The closet's NSScreen may show up only after a reconfiguration, so the label is tried on each until it works
         if !labeled, let screen = NSScreen.screens.first(where: Self.isCloset) {

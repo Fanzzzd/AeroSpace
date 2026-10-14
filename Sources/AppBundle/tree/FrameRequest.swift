@@ -19,6 +19,13 @@ struct FrameRequest: Equatable, Sendable {
     }
 }
 
+/// A ``FrameRequest`` on its way to the app, numbered, so that a late report of an earlier, identical request isn't
+/// taken for this one
+struct PendingFrameRequest: Equatable, Sendable {
+    let request: FrameRequest
+    let number: Int
+}
+
 /// What an app made of a ``FrameRequest``
 struct FrameAnswer: Sendable {
     let asked: FrameRequest
@@ -38,22 +45,25 @@ extension Window {
     /// Whether `request` has to go to the app, and if so, notes it as on its way. Layout asks for every window's frame
     /// on every refresh session; a request on its way, or one the app answered with nothing else moving the window
     /// since, needs nothing
-    func startFrameRequest(_ request: FrameRequest) -> Bool {
-        if request == (pendingFrameRequest ?? frameAnswer?.asked) { return false }
-        pendingFrameRequest = request
-        return true
+    func startFrameRequest(_ request: FrameRequest) -> PendingFrameRequest? {
+        if request == (pendingFrameRequest?.request ?? frameAnswer?.asked) { return nil }
+        frameRequestCount += 1
+        let pending = PendingFrameRequest(request: request, number: frameRequestCount)
+        pendingFrameRequest = pending
+        return pending
     }
 
     /// A frame write finished. `got` is the frame the window ended up with, nil when it couldn't be read
     @MainActor
-    func frameWritten(_ request: FrameRequest, got: Rect?) {
-        guard request == pendingFrameRequest else { return } // A later request replaced it
+    func frameWritten(_ pending: PendingFrameRequest, got: Rect?) {
+        guard pending == pendingFrameRequest else { return } // A later request replaced it
         pendingFrameRequest = nil
-        guard let got else {
+        // A drag that began during the write may have moved the window before it was read
+        guard let got, !isLeftMouseButtonDown else {
             frameAnswer = nil
             return
         }
-        let answer = FrameAnswer(asked: request, got: got)
+        let answer = FrameAnswer(asked: pending.request, got: got)
         frameAnswer = answer
         learnMinSize(from: answer)
     }

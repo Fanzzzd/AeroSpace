@@ -124,8 +124,8 @@ final class MacWindow: Window {
 
     override func setAxFrame(_ topLeft: CGPoint?, _ size: CGSize?) {
         let request = FrameRequest(topLeft: topLeft, size: size)
-        if startFrameRequest(request) {
-            macApp.setAxFrame(windowId, request, lastAnswer: frameAnswer)
+        if let pending = startFrameRequest(request) {
+            macApp.setAxFrame(windowId, pending, lastAnswer: frameAnswer)
         }
     }
 
