@@ -8,6 +8,12 @@ func movedObs(_: AXObserver, ax: AXUIElement, notif: CFString, _: UnsafeMutableR
 @MainActor
 private func moveWithMouse(_ window: Window, _ frame: Rect) async throws {
     resetClosedWindowsCache()
+    // Released, as normalizeIgnoredMonitorWindows releases windows that something else moves there. Waiting for it
+    // would be too late: the session after the mouse button goes up lays the workspaces out first
+    if window.parent !== ignoredMonitorWindowsContainer, ignoredMonitorRects.contains(where: { $0.contains(frame.center) }) {
+        window.bind(to: ignoredMonitorWindowsContainer, adaptiveWeight: WEIGHT_DOESNT_MATTER, index: INDEX_BIND_LAST)
+        return
+    }
     switch window.windowParentCases {
         case .floatingWindowsContainer:
             moveFloatingWindow(window, center: frame.center)

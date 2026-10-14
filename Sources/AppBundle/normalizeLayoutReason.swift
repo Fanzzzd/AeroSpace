@@ -10,23 +10,23 @@ func normalizeLayoutReason() async throws {
 }
 
 /// Windows that were moved onto a monitor from `ignored-monitors` are released, and windows that were moved back
-/// are laid out on the workspace of the monitor they landed on.
+/// are laid out on the workspace of the monitor they landed on. AeroSpace itself puts windows only on its monitors and
+/// on the closet, so a window of any workspace whose center is on an ignored monitor was moved there by something
+/// else, such as Sidescreen handing it to an agent. This runs before layout, which would otherwise park it again.
 @MainActor
 private func normalizeIgnoredMonitorWindows() async throws {
     let ignoredRects = ignoredMonitorRects
     for node in ignoredMonitorWindowsContainer.children {
         let window = node as! Window
-        guard let center = try await window.getCenter(.cancellable) else { continue }
+        guard let center = try await window.center(.cancellable) else { continue }
         if !ignoredRects.contains(where: { $0.contains(center) }) {
             try await window.relayoutWindow(on: center.monitorApproximation.activeWorkspace, .cancellable)
         }
     }
     if ignoredRects.isEmpty { return }
-    // Windows of invisible workspaces are on the closet, or where they were if AeroSpace couldn't make the closet.
-    // Only windows of visible workspaces can be where they appear to be.
-    for workspace in Workspace.all where workspace.isVisible {
+    for workspace in Workspace.all {
         for window in workspace.allLeafWindowsRecursive where window.layoutReason == .standard {
-            guard let center = try await window.getCenter(.cancellable) else { continue }
+            guard let center = try await window.center(.cancellable) else { continue }
             if ignoredRects.contains(where: { $0.contains(center) }) {
                 window.bind(to: ignoredMonitorWindowsContainer, adaptiveWeight: WEIGHT_DOESNT_MATTER, index: INDEX_BIND_LAST)
             }

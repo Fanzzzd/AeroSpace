@@ -81,13 +81,22 @@ extension Window {
     func asMacWindow() -> MacWindow { self as! MacWindow }
 }
 
-/// Whether macOS shows a window fullscreen or minimized
+/// What macOS shows of a window, read by the refresh pass
 struct MacosWindowState: Sendable {
     let isFullscreen: Bool
     let isMinimized: Bool
+    /// Read only while there are ignored monitors
+    var frame: Rect? = nil
 }
 
 extension Window {
+    /// Where the window's center is, as the refresh pass read it, or else asked now
+    @MainActor
+    func center(_ cm: CancellationMode) async throws -> CGPoint? {
+        if let frame = refreshedMacosState?.frame { return frame.center }
+        return try await getCenter(cm)
+    }
+
     /// What the refresh session read, or else asked now
     @MainActor
     func macosState(_ cm: CancellationMode) async throws -> MacosWindowState {
