@@ -1,28 +1,8 @@
 import AppKit
 import Common
 
-@MainActor
-private var resizeWithMouseTask: Task<(), any Error>? = nil
-
 func resizedObs(_: AXObserver, ax: AXUIElement, notif: CFString, _: UnsafeMutableRawPointer?) {
-    let notif = notif as String
-    let windowId = ax.containingWindowId()
-    let frame = ax.frame
-    Task.startUnstructured { @MainActor in
-        guard let token: RunSessionGuard = .isServerEnabled else { return }
-        guard let windowId, let window = Window.get(byId: windowId), try await isManipulatedWithMouse(window) else {
-            if let windowId, Window.get(byId: windowId)?.isWhereAeroSpacePutIt(frame) == true { return }
-            scheduleCancellableCompleteRefreshSession(.ax(notif))
-            return
-        }
-        resizeWithMouseTask?.cancel()
-        resizeWithMouseTask = Task.startUnstructured {
-            try checkCancellation()
-            try await runLightSession(.ax(notif), token) {
-                try await resizeWithMouse(window)
-            }
-        }
-    }
+    windowFrameChanged(ax, notif) { window, frame in try await resizeWithMouse(window, frame) }
 }
 
 @MainActor
@@ -39,7 +19,7 @@ func resetManipulatedWithMouseIfPossible() async throws {
 private let adaptiveWeightBeforeResizeWithMouseKey = TreeNodeUserDataKey<CGFloat>(key: "adaptiveWeightBeforeResizeWithMouseKey")
 
 @MainActor
-private func resizeWithMouse(_ window: Window) async throws { // todo cover with tests
+private func resizeWithMouse(_ window: Window, _ rect: Rect) async throws {
     resetClosedWindowsCache()
     switch window.windowParentCases {
         case .unbound: return
@@ -47,7 +27,6 @@ private func resizeWithMouse(_ window: Window) async throws { // todo cover with
              .macosPopupWindowsContainer, .ignoredMonitorWindowsContainer, .macosHiddenAppsWindowsContainer:
             return // Nothing to do for floating, or unconventional windows
         case .tilingContainer:
-            guard let rect = try await window.getAxRect(.cancellable) else { return }
             window.forgetMinSize(below: rect.size)
             guard let lastAppliedLayoutRect = window.lastAppliedLayoutPhysicalRect else { return }
             let (lParent, lOwnIndex) = window.closestParent(hasChildrenInDirection: .left, withLayout: .tiles) ?? (nil, nil)

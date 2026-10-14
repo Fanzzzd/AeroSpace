@@ -1,36 +1,16 @@
 import AppKit
 import Common
 
-@MainActor
-private var moveWithMouseTask: Task<(), any Error>? = nil
-
 func movedObs(_: AXObserver, ax: AXUIElement, notif: CFString, _: UnsafeMutableRawPointer?) {
-    let windowId = ax.containingWindowId()
-    let frame = ax.frame
-    let notif = notif as String
-    Task.startUnstructured { @MainActor in
-        guard let token: RunSessionGuard = .isServerEnabled else { return }
-        guard let windowId, let window = Window.get(byId: windowId), try await isManipulatedWithMouse(window) else {
-            if let windowId, Window.get(byId: windowId)?.isWhereAeroSpacePutIt(frame) == true { return }
-            scheduleCancellableCompleteRefreshSession(.ax(notif))
-            return
-        }
-        moveWithMouseTask?.cancel()
-        moveWithMouseTask = Task.startUnstructured {
-            try checkCancellation()
-            try await runLightSession(.ax(notif), token) {
-                try await moveWithMouse(window)
-            }
-        }
-    }
+    windowFrameChanged(ax, notif) { window, frame in try await moveWithMouse(window, frame) }
 }
 
 @MainActor
-private func moveWithMouse(_ window: Window) async throws { // todo cover with tests
+private func moveWithMouse(_ window: Window, _ frame: Rect) async throws {
     resetClosedWindowsCache()
     switch window.windowParentCases {
         case .floatingWindowsContainer:
-            try await moveFloatingWindow(window)
+            moveFloatingWindow(window, center: frame.center)
         case .macosFullscreenWindowsContainer, .macosMinimizedWindowsContainer, .macosPopupWindowsContainer,
              .ignoredMonitorWindowsContainer, .macosHiddenAppsWindowsContainer:
             return // Unconventional windows can't be moved with mouse
@@ -40,15 +20,15 @@ private func moveWithMouse(_ window: Window) async throws { // todo cover with t
             }
             // Resizing with the mouse measures from it, and a window that is being moved isn't being resized
             window.lastAppliedLayoutPhysicalRect = nil
-            guard let rect = try await window.getAxRect(.cancellable), let tile = mouseManipulation?.tile else { return }
-            moveTilingWindow(window, rect: rect, tile: tile)
+            guard let tile = mouseManipulation?.tile else { return }
+            moveTilingWindow(window, rect: frame, tile: tile)
         case .unbound: return
     }
 }
 
 @MainActor
-private func moveFloatingWindow(_ window: Window) async throws {
-    guard let targetWorkspace = try await window.getCenter(.cancellable)?.monitorApproximation.activeWorkspace else { return }
+private func moveFloatingWindow(_ window: Window, center: CGPoint) {
+    let targetWorkspace = center.monitorApproximation.activeWorkspace
     guard let parent = window.parent else { return }
     if targetWorkspace != parent {
         window.bindAsFloatingWindow(to: targetWorkspace)

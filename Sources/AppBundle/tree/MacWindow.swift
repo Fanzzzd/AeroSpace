@@ -123,7 +123,10 @@ final class MacWindow: Window {
     }
 
     override func setAxFrame(_ topLeft: CGPoint?, _ size: CGSize?) {
-        macApp.setAxFrame(windowId, FrameRequest(topLeft: topLeft, size: size), lastAnswer: frameAnswer)
+        let request = FrameRequest(topLeft: topLeft, size: size)
+        if startFrameRequest(request) {
+            macApp.setAxFrame(windowId, request, lastAnswer: frameAnswer)
+        }
     }
 
     override func getAxRect(_ cm: CancellationMode) async throws -> Rect? {

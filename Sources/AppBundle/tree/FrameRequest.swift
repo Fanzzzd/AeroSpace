@@ -35,8 +35,25 @@ extension CGSize {
 }
 
 extension Window {
+    /// Whether `request` has to go to the app, and if so, notes it as on its way. Layout asks for every window's frame
+    /// on every refresh session; a request on its way, or one the app answered with nothing else moving the window
+    /// since, needs nothing
+    func startFrameRequest(_ request: FrameRequest) -> Bool {
+        if request == (pendingFrameRequest ?? frameAnswer?.asked) { return false }
+        pendingFrameRequest = request
+        return true
+    }
+
+    /// A frame write finished. `got` is the frame the window ended up with, nil when it couldn't be read
     @MainActor
-    func answered(_ answer: FrameAnswer) {
+    func frameWritten(_ request: FrameRequest, got: Rect?) {
+        guard request == pendingFrameRequest else { return } // A later request replaced it
+        pendingFrameRequest = nil
+        guard let got else {
+            frameAnswer = nil
+            return
+        }
+        let answer = FrameAnswer(asked: request, got: got)
         frameAnswer = answer
         learnMinSize(from: answer)
     }

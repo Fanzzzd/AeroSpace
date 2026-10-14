@@ -147,29 +147,37 @@ final class MacApp: AbstractApp {
         }
     }
 
-    /// Writes the parts of `request` the window doesn't have, and tells the window what the app made of it
+    /// Writes the parts of `request` the window doesn't have, and tells the window how it went, however it went
     func setAxFrame(_ windowId: UInt32, _ request: FrameRequest, lastAnswer: FrameAnswer?) {
         setFrameJobs.removeValue(forKey: windowId)?.cancel()
-        setFrameJobs[windowId] = withWindowAsync(windowId, .cancellable) { [axApp] window, job in
-            // Layout asks for every window's frame on every refresh session. Writing what the window already has would
-            // make the app lay it out again and post AXMoved
-            guard let current = try AppBundle.getAxRect(window: window, job: job) else { return }
-            let missing = request.missing(from: current, lastAnswer: lastAnswer)
-            if missing.isEmpty { return }
-            try disableAnimations(app: axApp, job, restore: .afterQueuedJobs) {
-                try write(missing, of: request, to: window, job)
+        setFrameJobs[windowId] = thread?.runInLoopAsync(job: RunLoopJob(.cancellable), autoCheckCancelled: false) { [axApp, windows] job in
+            var got: Rect? = nil
+            defer {
+                let got = got
+                Task.startUnstructured { @MainActor in Window.get(byId: windowId)?.frameWritten(request, got: got) }
             }
-            guard let got = try AppBundle.getAxRect(window: window, job: job) else { return }
-            Task.startUnstructured { @MainActor in Window.get(byId: windowId)?.answered(FrameAnswer(asked: request, got: got)) }
-        }
+            guard let window = windows.threadGuarded[windowId]?.ax else { return }
+            got = try? {
+                try job.checkCancellation()
+                guard let current = try AppBundle.getAxRect(window: window, job: job) else { return nil }
+                // Writing what the window already has would make the app lay it out again and post AXMoved
+                let missing = request.missing(from: current, lastAnswer: lastAnswer)
+                if missing.isEmpty { return current }
+                try disableAnimations(app: axApp, job, restore: .afterQueuedJobs) {
+                    try write(missing, of: request, to: window, job)
+                }
+                return try AppBundle.getAxRect(window: window, job: job)
+            }()
+        } ?? .cancelled
     }
 
     func setAxFrameForTermination(_ windowId: UInt32, _ topLeft: CGPoint?, _ size: CGSize?) {
         setFrameJobs.removeValue(forKey: windowId)?.cancel()
         let semaphore = DispatchSemaphore(value: 0)
+        let request = FrameRequest(topLeft: topLeft, size: size)
         let job = withWindowAsync(windowId, .nonCancellable) { [axApp] window, job in
             try? disableAnimations(app: axApp, job, restore: .now) {
-                try setFrame(window, topLeft, size, job)
+                try write(request, of: request, to: window, job)
             }
             semaphore.signal()
         }
@@ -421,16 +429,6 @@ private func getAxRect(window: AXUIElement, job: RunLoopJob) throws -> Rect? {
     try job.checkCancellation()
     guard let size = window.get(Ax.sizeAttr) else { return nil }
     return Rect(topLeftX: topLeftCorner.x, topLeftY: topLeftCorner.y, width: size.width, height: size.height)
-}
-
-private func setFrame(_ window: AXUIElement, _ topLeft: CGPoint?, _ size: CGSize?, _ job: RunLoopJob) throws {
-    // Set size and then the position. The order is important https://github.com/nikitabobko/AeroSpace/issues/143
-    //                                                        https://github.com/nikitabobko/AeroSpace/issues/335
-    if let size { window.set(Ax.sizeAttr, size) }
-    try job.checkCancellation()
-    if let topLeft { window.set(Ax.topLeftCornerAttr, topLeft) } else { return }
-    try job.checkCancellation()
-    if let size { window.set(Ax.sizeAttr, size) }
 }
 
 /// Writes the `missing` parts of `request`: the size, then the position, then the size again if the window doesn't

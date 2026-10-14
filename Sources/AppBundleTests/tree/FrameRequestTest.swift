@@ -44,4 +44,30 @@ final class FrameRequestTest: XCTestCase {
         assertTrue(window.isWhereAeroSpacePutIt(Rect(topLeftX: 1733.4, topLeftY: 1152, width: 155, height: 1073)))
         assertTrue(!window.isWhereAeroSpacePutIt(Rect(topLeftX: 400, topLeftY: 300, width: 155, height: 1073)))
     }
+
+    @MainActor
+    func testRequestGoesToTheAppOnceUntilSomethingElseMovesTheWindow() {
+        setUpWorkspacesForTests()
+        let window = TestWindow.new(id: 1, parent: Workspace.get(byName: name).rootTilingContainer)
+        let request = FrameRequest(topLeft: CGPoint(x: 5, y: 38), size: CGSize(width: 855, height: 1073))
+        assertTrue(window.startFrameRequest(request))
+        assertTrue(!window.startFrameRequest(request)) // On its way
+        window.frameWritten(request, got: Rect(topLeftX: 5, topLeftY: 38, width: 855, height: 1073))
+        assertTrue(!window.startFrameRequest(request)) // Answered
+        window.frameAnswer = nil // AXMoved from something else
+        assertTrue(window.startFrameRequest(request))
+    }
+
+    @MainActor
+    func testAnswerToAReplacedRequestIsIgnored() {
+        setUpWorkspacesForTests()
+        let window = TestWindow.new(id: 1, parent: Workspace.get(byName: name).rootTilingContainer)
+        let first = FrameRequest(topLeft: CGPoint(x: 5, y: 38), size: nil)
+        let second = FrameRequest(topLeft: CGPoint(x: 1733, y: 1152), size: nil)
+        assertTrue(window.startFrameRequest(first))
+        assertTrue(window.startFrameRequest(second))
+        window.frameWritten(first, got: Rect(topLeftX: 5, topLeftY: 38, width: 855, height: 1073))
+        assertEquals(window.pendingFrameRequest, second)
+        assertTrue(window.frameAnswer == nil)
+    }
 }

@@ -8,10 +8,12 @@ open class Window: TreeNode, Hashable {
     /// Where the window waits on the closet while its workspace is invisible, from the closet's top left corner. Nil
     /// while its workspace is visible
     var closetOffset: CGPoint? = nil
-    /// The least size the app lets the window have, as far as AeroSpace has seen. See ``learnMinSize(_:)``
+    /// The least size the app lets the window have, as far as AeroSpace has seen. See ``learnMinSize(from:)``
     var minSize: CGSize = .zero
-    /// What the app made of the last frame AeroSpace asked for. See ``answered(_:)``
+    /// What the app made of the last frame AeroSpace asked for, until something else moves the window
     var frameAnswer: FrameAnswer? = nil
+    /// The frame AeroSpace is asking for now. See ``frameWritten(_:got:)``
+    var pendingFrameRequest: FrameRequest? = nil
     /// Read by the refresh session for every window at once. See ``macosState(_:)``
     var refreshedMacosState: MacosWindowState? = nil
     var isFullscreen: Bool = false
@@ -86,13 +88,10 @@ struct MacosWindowState: Sendable {
 }
 
 extension Window {
-    /// What the refresh session read, once, or else asked now
+    /// What the refresh session read, or else asked now
     @MainActor
     func macosState(_ cm: CancellationMode) async throws -> MacosWindowState {
-        if let refreshedMacosState {
-            self.refreshedMacosState = nil
-            return refreshedMacosState
-        }
+        if let refreshedMacosState { return refreshedMacosState }
         let isFullscreen = try await isMacosFullscreen(cm)
         let isMinimized = isFullscreen ? false : try await isMacosMinimized(cm)
         return MacosWindowState(isFullscreen: isFullscreen, isMinimized: isMinimized)
