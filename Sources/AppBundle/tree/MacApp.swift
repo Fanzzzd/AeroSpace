@@ -120,6 +120,7 @@ final class MacApp: AbstractApp {
     func getFocusedWindow(_ cm: CancellationMode) async throws -> Window? {
         let windowId = try await thread?.runInLoop(cm) { [nsApp, axApp, windows] job in
             try axApp.threadGuarded.get(Ax.focusedWindowAttr)
+                .map(windowOwningSheet)
                 .flatMap { try windows.threadGuarded.getOrRegisterAxWindow(windowId: $0.windowId, $0.ax.cast, nsApp, job) }?
                 .windowId
         }

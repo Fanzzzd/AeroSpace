@@ -186,9 +186,9 @@ enum Ax {
         var setter: @Sendable (T) -> CFTypeRef?
     }
 
-    static let parentWindowRecursive = ReadableAttrImpl<AXUIElement>(
+    static let parentWindowRecursive = ReadableAttrImpl<any AxUiElementMock>(
         key: kAXWindowAttribute,
-        getter: { ($0 as! AXUIElement) },
+        getter: castToAxUiElementMock,
     )
     static let titleAttr = WritableAttrImpl<String>(
         key: kAXTitleAttribute,
@@ -339,6 +339,18 @@ private func windowOrNil(_ any: Any?) -> WindowIdAndAxUiElementMock? {
         case let windowId?: (windowId, potentialWindow)
         case nil: nil
     }
+}
+
+/// While a sheet is open, apps report it as their focused window. The sheet is part of the window it's attached to, and
+/// that window is the one AeroSpace manages: taken on its own, the sheet would be a popup, and the window would stay on
+/// its workspace, hidden in the closet if the workspace is invisible
+func windowOwningSheet(_ focused: WindowIdAndAxUiElementMock) -> WindowIdAndAxUiElementMock {
+    guard focused.ax.get(Ax.roleAttr) == kAXSheetRole,
+          let owner = focused.ax.get(Ax.parentWindowRecursive),
+          let ownerId = owner.containingWindowId(),
+          ownerId != focused.windowId
+    else { return focused }
+    return (ownerId, owner)
 }
 
 extension AXUIElement: AxUiElementMock {
