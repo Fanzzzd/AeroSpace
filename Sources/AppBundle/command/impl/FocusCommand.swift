@@ -123,21 +123,34 @@ struct FocusCommand: Command {
 }
 
 @MainActor private func makeFloatingWindowsSeenAsTiling(workspace: Workspace) async -> [FloatingWindowData] {
+    // First ask the apps where the windows are, then move them in one go: other sessions run while the apps answer, and
+    // a window unbound across an await, or a container picked before one, may be gone from the tree by then
+    var centers: [UInt32: CGPoint] = [:]
+    func target(of center: CGPoint) -> Window? {
+        center.coerce(in: workspace.workspaceMonitor.visibleRectPaddedByOuterGaps)?
+            .findWindowRecursively(in: workspace.rootTilingContainer, virtual: true, fullscreenCoversAll: false)
+    }
+    for window in workspace.floatingWindows {
+        // todo bug: we shouldn't access ax api here. What if the window was moved but it wasn't committed to ax yet?
+        guard let center = try? await window.getCenter(.nonCancellable) else { continue }
+        centers[window.windowId] = center
+        if let target = target(of: center), centers[target.windowId] == nil {
+            centers[target.windowId] = try? await target.getCenter(.nonCancellable)
+        }
+    }
+
     let mruBefore = workspace.mostRecentWindowRecursive
     defer {
         mruBefore?.markAsMostRecentChild()
     }
     var _floatingWindows: [FloatingWindowData] = []
     for window in workspace.floatingWindows {
-        // todo bug: we shouldn't access ax api here. What if the window was moved but it wasn't committed to ax yet?
-        guard let center = try? await window.getCenter(.nonCancellable) else { continue }
+        guard let center = centers[window.windowId] else { continue }
 
         let tilingParent: TilingContainer
         let index: Int
-        if let target = center.coerce(in: workspace.workspaceMonitor.visibleRectPaddedByOuterGaps)?
-            .findWindowRecursively(in: workspace.rootTilingContainer, virtual: true, fullscreenCoversAll: false)
-        {
-            guard let targetCenter = try? await target.getCenter(.nonCancellable) else { continue }
+        if let target = target(of: center) {
+            guard let targetCenter = centers[target.windowId] else { continue }
             guard let _tilingParent = target.parent as? TilingContainer else { continue }
             tilingParent = _tilingParent
             index = switch tilingParent.layout {
@@ -174,11 +187,14 @@ struct FocusCommand: Command {
 }
 
 @MainActor private func restoreFloatingWindows(floatingWindows: [FloatingWindowData], workspace: Workspace) {
+    let workspace = Workspace.get(byName: workspace.name) // Not a garbage collected one
     let mruBefore = workspace.mostRecentWindowRecursive
     defer {
         mruBefore?.markAsMostRecentChild()
     }
     for floating in floatingWindows {
+        // A window that closed meanwhile stays out of the tree
+        if let window = floating.window as? MacWindow, MacWindow.allWindowsMap[window.windowId] !== window { continue }
         floating.window.bind(to: workspace.floatingWindowsContainer, adaptiveWeight: floating.adaptiveWeight, index: INDEX_BIND_LAST)
     }
 }

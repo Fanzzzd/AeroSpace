@@ -22,6 +22,11 @@ final class Closet {
     /// Read off the main actor too: ``mainMonitor`` isn't isolated
     private nonisolated static let id = OSAllocatedUnfairLock<CGDirectDisplayID?>(initialState: nil)
     var displayId: CGDirectDisplayID? { Self.id.withLock { $0 } }
+    /// When macOS last called back about the displays. Written off the main actor, by the reconfiguration callback
+    private nonisolated static let lastDisplaysChange = OSAllocatedUnfairLock<Date>(initialState: .distantPast)
+    /// macOS moves windows with the displays, and apps pull windows back onto screens, while the displays change. A
+    /// window moved then wasn't moved on purpose
+    nonisolated static var displaysChangedRecently: Bool { lastDisplaysChange.withLock { $0 }.distance(to: .now) < 2 }
     private var pointerMonitor: Any? = nil
     /// The origin ``place()`` last asked for, and how many times
     private var placement: (origin: CGPoint, attempts: Int)? = nil
@@ -69,6 +74,7 @@ final class Closet {
         displaysChanged()
         // macOS calls back once per display for each change: handle the change once, after the last call
         unsafe CGDisplayRegisterReconfigurationCallback({ _, flags, _ in
+            Closet.lastDisplaysChange.withLock { $0 = .now }
             if flags.contains(.beginConfigurationFlag) { return }
             Task { @MainActor in
                 if Closet.shared.changeScheduled { return }

@@ -1,8 +1,8 @@
 # AeroSpace Beta [![Build](https://github.com/nikitabobko/AeroSpace/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/nikitabobko/AeroSpace/actions/workflows/build.yml)
 
 > [!NOTE]
-> This is the `sidescreen` branch of [Fanzzzd/AeroSpace](https://github.com/Fanzzzd/AeroSpace), a fork of [nikitabobko/AeroSpace](https://github.com/nikitabobko/AeroSpace) by Nikita Bobko.
-> It adds one option, `ignored-monitors`, and otherwise follows upstream releases. See [SIDESCREEN.md](./SIDESCREEN.md).
+> This is the `agent-screen` branch of [Fanzzzd/AeroSpace](https://github.com/Fanzzzd/AeroSpace), a fork of [nikitabobko/AeroSpace](https://github.com/nikitabobko/AeroSpace) by Nikita Bobko.
+> It adds one option, `ignored-monitors`, and otherwise follows upstream releases. See [AGENT-SCREEN.md](./AGENT-SCREEN.md).
 
 <img src="./resources/Assets.xcassets/AppIcon.appiconset/icon.png" width="40%" align="right">
 

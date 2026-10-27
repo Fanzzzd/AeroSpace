@@ -278,8 +278,7 @@ final class MacApp: AbstractApp {
     }
 
     @MainActor
-    /// `readFrames`: whether to read each window's frame too, which only ignored monitors need
-    static func refreshAllAndGetAliveWindows(frontmostAppBundleId: String?, readFrames: Bool) async throws -> [MacApp: [UInt32: MacosWindowState]] {
+    static func refreshAllAndGetAliveWindows(frontmostAppBundleId: String?) async throws -> [MacApp: [UInt32: MacosWindowState]] {
         for (_, app) in MacApp.allAppsMap { // gc dead apps
             try checkCancellation()
             if app.nsApp.isTerminated {
@@ -290,7 +289,7 @@ final class MacApp: AbstractApp {
             func refreshTheApp(_ nsApp: NSRunningApplication) {
                 group.addTask { @Sendable @MainActor in
                     guard let app = try await MacApp.getOrRegister(nsApp) else { return (nsApp.processIdentifier, [:]) }
-                    return (nsApp.processIdentifier, try await app.refreshAndGetAliveWindows(frontmostAppBundleId: frontmostAppBundleId, readFrames: readFrames))
+                    return (nsApp.processIdentifier, try await app.refreshAndGetAliveWindows(frontmostAppBundleId: frontmostAppBundleId))
                 }
             }
             // Register new apps
@@ -321,7 +320,7 @@ final class MacApp: AbstractApp {
 
     /// The app's windows, with their macOS state read in the same pass, so that ``normalizeLayoutReason()`` doesn't ask
     /// each window on its own
-    private func refreshAndGetAliveWindows(frontmostAppBundleId: String?, readFrames: Bool) async throws -> [UInt32: MacosWindowState] {
+    private func refreshAndGetAliveWindows(frontmostAppBundleId: String?) async throws -> [UInt32: MacosWindowState] {
         if nsApp.isTerminated {
             await destroy()
             return [:]
@@ -348,11 +347,7 @@ final class MacApp: AbstractApp {
             let states = try alive.mapValues { window in
                 try job.checkCancellation()
                 let isFullscreen = window.ax.get(Ax.isFullscreenAttr) == true
-                return MacosWindowState(
-                    isFullscreen: isFullscreen,
-                    isMinimized: !isFullscreen && window.ax.get(Ax.minimizedAttr) == true,
-                    frame: readFrames ? window.ax.frame : nil,
-                )
+                return MacosWindowState(isFullscreen: isFullscreen, isMinimized: !isFullscreen && window.ax.get(Ax.minimizedAttr) == true)
             }
             return (states, Array(dead.keys))
         }

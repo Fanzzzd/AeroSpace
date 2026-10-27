@@ -96,6 +96,8 @@ public enum RefreshSessionEvent: Sendable, CustomStringConvertible {
     case ax(String)
     case focusFollowsMouse
     case windowMinSize
+    case claimsChanged
+    case claimHeldWindows
 
     public var isStartup: Bool {
         if case .startup = self { return true } else { return false }
@@ -110,6 +112,8 @@ public enum RefreshSessionEvent: Sendable, CustomStringConvertible {
             case .ax(let str): "ax(\(str))"
             case .configAutoReload: "configAutoReload"
             case .windowMinSize: "windowMinSize"
+            case .claimsChanged: "claimsChanged"
+            case .claimHeldWindows: "claimHeldWindows"
             case .globalObserver(let str): "globalObserver(\(str))"
             case .globalObserverLeftMouseUp: "globalObserverLeftMouseUp"
             case .hotkeyBinding: "hotkeyBinding"

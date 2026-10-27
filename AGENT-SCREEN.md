@@ -1,4 +1,4 @@
-# AeroSpace, `sidescreen` branch
+# AeroSpace, `agent-screen` branch
 
 This branch is upstream [AeroSpace](https://github.com/nikitabobko/AeroSpace) by Nikita Bobko plus two patches.
 All credit for AeroSpace goes to its authors. The license is unchanged (MIT, see [legal/LICENSE.txt](./legal/LICENSE.txt)).
@@ -7,7 +7,7 @@ All credit for AeroSpace goes to its authors. The license is unchanged (MIT, see
 
 ```toml
 # AeroSpace doesn't manage monitors whose name matches one of these case insensitive regexes
-ignored-monitors = ['^Sidescreen']
+ignored-monitors = ['^Agent Screen']
 ```
 
 Some apps create virtual displays for AI agents. Stock AeroSpace treats them as regular monitors: it shows one of your
@@ -44,19 +44,49 @@ This branch moves those windows to a virtual display of its own instead, the clo
 
 The closet is made with the private `CGVirtualDisplay` API. It is kept in this fork only, not proposed upstream.
 
+## Claims: the app that makes the displays says which windows are its own
+
+AeroSpace can't tell by itself whose a window on an ignored monitor is. Apps open windows where they were last, apps
+activate their own windows, and macOS moves windows between displays when one is added or removed. So the app that
+makes the ignored displays, such as Agent Screen, tells AeroSpace which windows it took, in a claim file.
+
+- **Path.** `~/Library/Application Support/AeroSpace/claims/<pid>.json`, where `<pid>` is the claiming process. Each
+  process writes its own file. Write a temporary file in the same directory and rename it over the claim file, so
+  AeroSpace never reads half a file. AeroSpace watches the directory and refreshes when it changes.
+- **Format.** `{"version": 1, "displays": [<CGDirectDisplayID>, ...], "windows": [<CGWindowID>, ...]}`.
+- **`displays`.** Every display the process made that is connected, spares included. AeroSpace treats them as
+  ignored monitors from the moment they are in the file, whatever their name, even while `NSScreen.screens` doesn't
+  list them yet.
+- **`windows`.** Every window that is the process's own, on its displays or on its way there. Add a window before
+  moving it onto a display, and remove it before moving it off. Remove it when it leaves the display any other way,
+  for example when the user drags it out. Ids of closed windows do no harm.
+- **Liveness.** A file whose process isn't running doesn't count, and AeroSpace deletes it. Delete the file on quit.
+
+While at least one live claim file exists:
+
+- AeroSpace leaves a claimed window alone wherever it is: it doesn't lay it out, hide it or park it, even while the
+  window is still on the user's screen. `list-windows --all` doesn't list it.
+- A window on an ignored monitor that nobody claims is the user's. AeroSpace holds it for 1 s after it appears there or
+  loses its claim, without laying it out, and then lays it out on the focused workspace.
+- AeroSpace doesn't guess from positions, focus or timing.
+
+Without a live claim file, AeroSpace guesses: a window that opened on an ignored monitor, or that something other than
+the user moved there while the displays held still, is released, unless the user just focused it.
+
 ## How releases work
 
 - The branch is the latest upstream release tag plus three commits: the `ignored-monitors` patch, the fork files
-  (this file, the README note, `.github/workflows/sidescreen-release.yml` and the scripts in `.github/sidescreen/`),
+  (this file, the README note, `.github/workflows/agent-screen-release.yml` and the scripts in `.github/agent-screen/`),
   and the closet patch. No upstream file other than README.md is changed outside the patches.
 - Once a week, GitHub Actions rebases those commits onto the latest upstream release, builds, and runs upstream's
   `./test.sh`. When upstream has published a release that this fork hasn't, it builds it with `./build-release.sh`,
-  notarizes it, and publishes `sidescreen-<upstream tag>` on the Releases page of this repository.
+  notarizes it, and publishes `agent-screen-<upstream tag>` on the Releases page of this repository. Releases before the
+  branch was renamed from `sidescreen` are tagged `sidescreen-<upstream tag>`.
 - If the rebase conflicts, or building, testing or notarizing fails, it opens an issue instead of releasing.
 - Release builds are signed with a Developer ID (team 59AW6PWR73) with the hardened runtime, notarized by Apple, and
   stapled.
 - The scripts run locally too. For example, to build a notarized zip without publishing it:
-  `.github/sidescreen/release.sh v0.21.3-Beta --no-publish` with `CODESIGN_IDENTITY`, `APPLE_API_KEY_ID`,
+  `.github/agent-screen/release.sh v0.21.3-Beta --no-publish` with `CODESIGN_IDENTITY`, `APPLE_API_KEY_ID`,
   `APPLE_API_ISSUER_ID` and `APPLE_API_KEY_PATH` set.
 - The app keeps the bundle id `bobko.aerospace` and the name `AeroSpace.app`, so it replaces stock AeroSpace and reads
   the same config. macOS asks for the Accessibility permission again after switching, because the signature differs.

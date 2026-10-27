@@ -18,6 +18,8 @@ import Foundation
         _ = await reloadConfig_nonCancellable()
 
         Closet.shared.open()
+        Claims.shared.start()
+        let isRestart = restoreWorldAfterRestart()
         startUnixSocketServer()
         GlobalObserver.initObserver()
         Workspace.garbageCollectUnusedWorkspaces() // init workspaces
@@ -30,7 +32,7 @@ import Foundation
             layoutWorkspaces: false,
         )
         try await runLightSession(.startup, .forceRun) {
-            smartLayoutAtStartup()
+            if !isRestart { smartLayoutAtStartup() } // The layout the user had is back
             _ = await config.afterStartupCommand.run(.defaultEnv, .emptyStdin)
         }
     }

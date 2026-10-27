@@ -110,6 +110,7 @@ struct RunSessionGuard: Sendable {
 
 @MainActor
 func refreshModel_nonCancellable() async {
+    Claims.shared.reload()
     if refreshSessionEvent?.isFocusFollowsMouse == true {
         await checkOnFocusChangedCallbacks_nonCancellable()
     } else {
@@ -122,10 +123,7 @@ func refreshModel_nonCancellable() async {
 @MainActor
 private func refresh() async throws {
     // Garbage collect terminated apps and windows before working with all windows
-    let mapping = try await MacApp.refreshAllAndGetAliveWindows(
-        frontmostAppBundleId: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
-        readFrames: !ignoredMonitorRects.isEmpty,
-    )
+    let mapping = try await MacApp.refreshAllAndGetAliveWindows(frontmostAppBundleId: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
     let aliveWindowIds = mapping.values.flatMap(\.keys).toSet()
 
     for window in MacWindow.allWindows {
@@ -138,6 +136,17 @@ private func refresh() async throws {
             try await MacWindow.getOrRegister(windowId: windowId, macApp: app).refreshedMacosState = state
         }
     }
+    // A window can drop out of the tree: parents are weak, so a container that something unbinds with windows still in
+    // it takes them along, and a workspace garbage collected while something bound a window into it holds on to it
+    // only until that something lets go (https://github.com/nikitabobko/AeroSpace/issues/1215). getOrRegister returns
+    // such a window as it is, so without this it stays registered but on no workspace, and nothing lays it out again
+    for window in MacWindow.allWindows where !window.isInTheTree {
+        ClosetLog.write("audit: window \(window.windowId) of \(window.app.name ?? "?") was out of the tree, under \(window.parent.map { "\(type(of: $0))" } ?? "nothing"); unbound at: \(window.unboundStacktrace?.prefix(2000) ?? "-")")
+        let workspace = try await window.getCenter(.cancellable)?.monitorApproximation.activeWorkspace ?? focus.workspace
+        if !window.isInTheTree { try await window.relayoutWindow(on: workspace, .cancellable) }
+    }
+
+    OtherDesktops.shared.check()
 
     // Garbage collect workspaces after apps, because workspaces contain apps.
     Workspace.garbageCollectUnusedWorkspaces()

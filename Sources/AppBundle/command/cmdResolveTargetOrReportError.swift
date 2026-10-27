@@ -42,6 +42,10 @@ extension Window {
     func toLiveFocusOrReportError(_ io: CmdIo) -> LiveFocus? {
         if let result = toLiveFocusOrNil() {
             return result
+        } else if parent === ignoredMonitorWindowsContainer {
+            // A released window is on no workspace. Commands about it, such as one that moves it back to a workspace
+            // when its claim goes, act from the focused workspace
+            return LiveFocus(windowOrNil: self, workspace: focus.workspace)
         } else {
             io.err("Window \(windowId) doesn't belong to any monitor. And thus can't even define a focused workspace")
             return nil

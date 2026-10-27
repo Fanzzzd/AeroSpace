@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Rebases the commits of the sidescreen branch onto the latest upstream release.
+# Rebases the commits of the agent-screen branch onto the latest upstream release.
 # Prints `latest=<tag>`, `rebased=<bool>` and `released=<bool>`, and writes them to $GITHUB_OUTPUT on GitHub Actions.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -27,7 +27,10 @@ main() {
         output rebased true
     fi
 
-    if gh release view "sidescreen-$latest" --repo "${GITHUB_REPOSITORY:-Fanzzzd/AeroSpace}" &> /dev/null; then
+    # Releases from before the branch was renamed are tagged sidescreen-<tag>
+    local repo="${GITHUB_REPOSITORY:-Fanzzzd/AeroSpace}"
+    if gh release view "agent-screen-$latest" --repo "$repo" &> /dev/null ||
+        gh release view "sidescreen-$latest" --repo "$repo" &> /dev/null; then
         output released true
     else
         output released false

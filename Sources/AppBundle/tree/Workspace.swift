@@ -47,6 +47,9 @@ final class Workspace: TreeNode, NonLeafTreeNodeObject, Hashable, Comparable {
         workspaceNameToWorkspace.values.sorted()
     }
 
+    /// Whether the workspace is still in the workspace list, rather than garbage collected while something held on to it
+    @MainActor var isLive: Bool { workspaceNameToWorkspace[name] === self }
+
     @MainActor static func get(byName name: String) -> Workspace {
         if let existing = workspaceNameToWorkspace[name] {
             return existing

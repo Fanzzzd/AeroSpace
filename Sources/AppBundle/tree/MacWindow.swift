@@ -31,6 +31,7 @@ final class MacWindow: Window {
         // atomic synchronous section
         if let existing = allWindowsMap[windowId] { return existing }
         let window = MacWindow(windowId, macApp, lastFloatingSize: rect?.size, parent: data.parent, adaptiveWeight: data.adaptiveWeight, index: data.index)
+        window.isPlacedByOthers = true // It opened where the app put it
         allWindowsMap[windowId] = window
 
         try await debugWindowsIfRecording(window, .cancellable)
@@ -80,6 +81,7 @@ final class MacWindow: Window {
             return
         }
         if !skipClosedWindowsCache { cacheClosedWindowIfNeeded() }
+        guard isBound else { return } // It dropped out of the tree, so it has no parent to leave
         let parent = unbindFromParent().parent
         let deadWindowWorkspace = parent.nodeWorkspace
         let focus = focus
@@ -140,6 +142,9 @@ extension Window {
         let data = forceTile
             ? unbindAndGetBindingDataForNewTilingWindow(workspace, window: self)
             : try await unbindAndGetBindingDataForNewWindow(self.asMacWindow().windowId, self.asMacWindow().macApp, workspace, window: self, cm)
+        // The window may have closed while the app was asked about it. Binding it then would leave a dead window in the
+        // tree, next to the one that registers if it shows up again
+        if let window = self as? MacWindow, MacWindow.allWindowsMap[windowId] !== window { return }
         bind(to: data.parent, adaptiveWeight: data.adaptiveWeight, index: data.index)
     }
 }
@@ -148,7 +153,11 @@ extension Window {
 @MainActor
 private func unbindAndGetBindingDataForNewWindow(_ windowId: UInt32, _ macApp: MacApp, _ workspace: Workspace, window: Window?, _ cm: CancellationMode) async throws -> BindingData {
     let windowLevel = getWindowLevel(for: windowId)
-    return switch try await macApp.getAxUiElementWindowType(windowId, windowLevel, cm) {
+    let type = try await macApp.getAxUiElementWindowType(windowId, windowLevel, cm)
+    // The workspace may have been garbage collected while the app was asked, if it was empty and something else got the
+    // focus. A window bound into it would go when the last reference to the workspace does
+    let workspace = Workspace.get(byName: workspace.name)
+    return switch type {
         case .popup: BindingData(parent: macosPopupWindowsContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
         case .dialog: BindingData(parent: workspace.floatingWindowsContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
         case .window: unbindAndGetBindingDataForNewTilingWindow(workspace, window: window)
@@ -158,7 +167,8 @@ private func unbindAndGetBindingDataForNewWindow(_ windowId: UInt32, _ macApp: M
 // The function is private because it's unsafe. It leaves the window in unbound state
 @MainActor
 private func unbindAndGetBindingDataForNewTilingWindow(_ workspace: Workspace, window: Window?) -> BindingData {
-    window?.unbindFromParent() // It's important to unbind to get correct data from below
+    // It's important to unbind to get correct data from below. A window that dropped out of the tree has nothing to unbind
+    if let window, window.isBound { window.unbindFromParent() }
     let mruWindow = workspace.mostRecentWindowRecursive
     if let mruWindow, let tilingParent = mruWindow.parent as? TilingContainer {
         return BindingData(

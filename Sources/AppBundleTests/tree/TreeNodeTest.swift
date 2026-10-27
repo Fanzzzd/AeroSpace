@@ -14,6 +14,39 @@ final class TreeNodeTest: XCTestCase {
         XCTAssertTrue(window.parent == nil)
     }
 
+    func testRelayoutWindowThatDroppedOutOfTheTree() async throws {
+        let workspace = Workspace.get(byName: name) // Don't cache root node
+        let window = TestWindow.new(id: 1, parent: workspace.rootTilingContainer)
+        workspace.rootTilingContainer.unbindFromParent()
+        XCTAssertTrue(window.parent == nil)
+
+        try await window.relayoutWindow(on: workspace, .nonCancellable, forceTile: true)
+        XCTAssertTrue(window.parent === workspace.rootTilingContainer)
+    }
+
+    func testIsInTheTree() {
+        let workspace = Workspace.get(byName: name)
+        let root = workspace.rootTilingContainer // Held, as by a caller that is still working with it
+        let window = TestWindow.new(id: 1, parent: root)
+        XCTAssertTrue(window.isInTheTree)
+
+        root.unbindFromParent()
+        XCTAssertTrue(window.parent === root)
+        XCTAssertFalse(window.isInTheTree)
+
+        window.bind(to: macosMinimizedWindowsContainer, adaptiveWeight: 1, index: INDEX_BIND_LAST)
+        XCTAssertTrue(window.isInTheTree)
+    }
+
+    func testWindowBoundIntoGarbageCollectedWorkspaceIsOutOfTheTree() {
+        let stale = Workspace.get(byName: "stale") // Empty, invisible and unfocused
+        Workspace.garbageCollectUnusedWorkspaces()
+        XCTAssertFalse(stale.isLive)
+
+        let window = TestWindow.new(id: 1, parent: stale.rootTilingContainer)
+        XCTAssertFalse(window.isInTheTree)
+    }
+
     func testIsEffectivelyEmpty() {
         let workspace = Workspace.get(byName: name)
 

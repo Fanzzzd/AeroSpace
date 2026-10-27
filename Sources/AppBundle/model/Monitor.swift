@@ -76,7 +76,10 @@ extension NSScreen {
     /// The main screen is never ignored: AeroSpace needs at least one monitor
     @MainActor
     fileprivate var isIgnored: Bool {
-        !isMainScreen && config.ignoredMonitors.contains { localizedName.contains(caseInsensitiveRegex: $0) }
+        !isMainScreen && (
+            config.ignoredMonitors.contains { localizedName.contains(caseInsensitiveRegex: $0) } ||
+                displayId.map(Claims.shared.displays.contains) == true
+        )
     }
 
     /// The property is a replacement for Apple's crazy ``frame``
@@ -121,11 +124,21 @@ var monitors: [Monitor] {
         : screens.filter { !$0.screen.isIgnored }.map { $0.screen.toMonitor(monitorAppKitNsScreenScreensId: $0.id) }
 }
 
-/// Rects of the monitors matched by `ignored-monitors`. AeroSpace doesn't assign workspaces to them and releases
-/// windows that are moved onto them.
+/// The displays of ``monitors``
+@MainActor
+var monitorDisplayIds: [CGDirectDisplayID] {
+    isUnitTest ? [] : screens.filter { !$0.screen.isIgnored }.compactMap(\.screen.displayId)
+}
+
+/// Rects of the monitors matched by `ignored-monitors`, and of the claimed displays. AeroSpace doesn't assign
+/// workspaces to them and releases windows that are moved onto them. A claimed display counts from the moment it's
+/// claimed: `NSScreen.screens` lists a new display later than CoreGraphics does
 @MainActor
 var ignoredMonitorRects: [Rect] {
-    isUnitTest ? [] : screens.filter { $0.screen.isIgnored }.map(\.screen.rect)
+    if isUnitTest { return [] }
+    let claimed = Claims.shared.displays.filter { CGDisplayIsActive($0) != 0 }.map { CGDisplayBounds($0) }
+        .map { Rect(topLeftX: $0.minX, topLeftY: $0.minY, width: $0.width, height: $0.height) }
+    return screens.filter { $0.screen.isIgnored }.map(\.screen.rect) + claimed
 }
 
 @MainActor

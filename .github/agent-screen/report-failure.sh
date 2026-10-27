@@ -6,7 +6,7 @@
 set -euo pipefail
 
 main() {
-    local title="sidescreen-release failed for ${1:-the latest upstream release}"
+    local title="agent-screen-release failed for ${1:-the latest upstream release}"
     local run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
     local existing
     existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "$title in:title" --json number --jq '.[0].number')"

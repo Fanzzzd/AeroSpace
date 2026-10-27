@@ -32,6 +32,9 @@ func windowFrameChanged(
         let window = windowId.flatMap { Window.get(byId: $0) }
         if window?.isWhereAeroSpacePutIt(frame) == true { return }
         window?.frameAnswer = nil // Something else moved it
+        // macOS moves windows with the displays, and apps pull them back onto screens, right after the displays change.
+        // With claims, that's no guess: a window that lands on an ignored monitor waits there for its claim
+        if Claims.shared.isActive || !Closet.displaysChangedRecently { window?.isPlacedByOthers = true }
         guard let window, let frame, try await isManipulatedWithMouse(window) else {
             scheduleCancellableCompleteRefreshSession(.ax(notif))
             return

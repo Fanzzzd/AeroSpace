@@ -9,7 +9,7 @@ import Common
 /// so that once the screen is unlocked, AeroSpace could restore windows to where they were
 @MainActor private var closedWindowsCache = FrozenWorld(workspaces: [], monitors: [], windowIds: [])
 
-struct FrozenMonitor: Sendable {
+struct FrozenMonitor: Sendable, Codable {
     let topLeftCorner: CGPoint
     let visibleWorkspace: String
 
@@ -19,7 +19,7 @@ struct FrozenMonitor: Sendable {
     }
 }
 
-struct FrozenWorkspace: Sendable {
+struct FrozenWorkspace: Sendable, Codable {
     let name: String
     let monitor: FrozenMonitor // todo drop this property, once monitor to workspace assignment migrates to TreeNode
     let rootTilingNode: FrozenContainer
@@ -43,11 +43,54 @@ struct FrozenWorkspace: Sendable {
     if allWindowIds.isSubset(of: closedWindowsCache.windowIds) {
         return // already cached
     }
-    closedWindowsCache = FrozenWorld(
+    closedWindowsCache = freezeWorld()
+}
+
+@MainActor private func freezeWorld() -> FrozenWorld {
+    let allWs = Workspace.all
+    return FrozenWorld(
         workspaces: allWs.map { FrozenWorkspace($0) },
         monitors: monitors.map(FrozenMonitor.init),
-        windowIds: allWindowIds,
+        windowIds: allWs.flatMap { collectAllWindowIdsRecursive($0) }.toSet(),
     )
+}
+
+/// The world, saved when AeroSpace quits and read when it starts, so that a restart keeps every window in its place in
+/// its workspace: the windows are new to AeroSpace then, and restoring the cache puts them back, as after a lock screen.
+/// Window ids last while their apps run, and macOS hands them out anew after a boot, so a world from before the last
+/// boot is dropped
+private struct SavedWorld: Codable {
+    let bootTime: Int
+    let world: FrozenWorld
+}
+
+private var savedWorldUrl: URL {
+    FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appending(path: "AeroSpace/world-at-quit.json")
+}
+
+private var bootTime: Int {
+    var time = timeval()
+    var size = MemoryLayout<timeval>.size
+    unsafe sysctlbyname("kern.boottime", &time, &size, nil, 0)
+    return time.tv_sec
+}
+
+@MainActor func saveWorldForRestart() {
+    guard let data = try? JSONEncoder().encode(SavedWorld(bootTime: bootTime, world: freezeWorld())) else { return }
+    try? FileManager.default.createDirectory(at: savedWorldUrl.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try? data.write(to: savedWorldUrl, options: .atomic)
+}
+
+/// Once: a world read twice would undo what the user did since the first start
+@MainActor func restoreWorldAfterRestart() -> Bool {
+    defer { try? FileManager.default.removeItem(at: savedWorldUrl) }
+    guard let data = try? Data(contentsOf: savedWorldUrl),
+          let saved = try? JSONDecoder().decode(SavedWorld.self, from: data),
+          saved.bootTime == bootTime
+    else { return false }
+    closedWindowsCache = saved.world
+    return true
 }
 
 @MainActor func restoreClosedWindowsCacheIfNeeded(newlyDetectedWindow: Window) async throws -> Bool {

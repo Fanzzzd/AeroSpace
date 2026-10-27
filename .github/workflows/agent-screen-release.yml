@@ -1,15 +1,16 @@
-# Keeps the sidescreen branch on top of the latest upstream release and publishes a notarized build of it.
-# The steps live in .github/sidescreen/ and run locally too. See SIDESCREEN.md.
+# Keeps the agent-screen branch on top of the latest upstream release and publishes a notarized build of it.
+# The steps live in .github/agent-screen/ and run locally too. See AGENT-SCREEN.md.
 #
 # Variables:
 # - CODESIGN_IDENTITY: name of the Developer ID Application certificate
 # - APPLE_API_KEY_ID, APPLE_API_ISSUER_ID: App Store Connect API key for notarytool
 # Secrets:
 # - SIDESCREEN_DEPLOY_KEY: write deploy key of this repository. GITHUB_TOKEN can't push commits that change
-#   .github/workflows, and upstream releases often do.
+#   .github/workflows, and upstream releases often do. It keeps the name it got before the branch was renamed from
+#   sidescreen: GitHub doesn't rename secrets.
 # - DEVELOPER_ID_P12_BASE64, DEVELOPER_ID_P12_PASSWORD: the Developer ID Application certificate and its key
 # - APPLE_API_KEY_P8_BASE64: private key of the App Store Connect API key
-name: sidescreen-release
+name: agent-screen-release
 
 on:
   schedule:
@@ -20,7 +21,7 @@ permissions:
   contents: write
   issues: write
 
-concurrency: sidescreen-release
+concurrency: agent-screen-release
 
 env:
   GH_TOKEN: ${{ github.token }}
@@ -34,13 +35,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: sidescreen
+          ref: agent-screen
           fetch-depth: 0
           ssh-key: ${{ secrets.SIDESCREEN_DEPLOY_KEY }}
 
       - name: Rebase onto the latest upstream release
         id: sync
-        run: .github/sidescreen/sync.sh
+        run: .github/agent-screen/sync.sh
 
       - name: Install the toolchain
         run: |
@@ -53,14 +54,14 @@ jobs:
 
       - name: Push the rebased branch
         if: steps.sync.outputs.rebased == 'true'
-        run: git push --force-with-lease origin HEAD:sidescreen
+        run: git push --force-with-lease origin HEAD:agent-screen
 
       - name: Import the Developer ID certificate
         if: steps.sync.outputs.released == 'false'
         env:
           DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
           DEVELOPER_ID_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
-        run: .github/sidescreen/keychain.sh import
+        run: .github/agent-screen/keychain.sh import
 
       - name: Build, notarize and publish
         if: steps.sync.outputs.released == 'false'
@@ -69,14 +70,14 @@ jobs:
           APPLE_API_ISSUER_ID: ${{ vars.APPLE_API_ISSUER_ID }}
           APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
           TAG: ${{ steps.sync.outputs.latest }}
-        run: .github/sidescreen/release.sh "$TAG"
+        run: .github/agent-screen/release.sh "$TAG"
 
       - name: Delete the signing keychain
         if: always()
-        run: .github/sidescreen/keychain.sh delete
+        run: .github/agent-screen/keychain.sh delete
 
       - name: Report the failure
         if: failure()
         env:
           TAG: ${{ steps.sync.outputs.latest }}
-        run: .github/sidescreen/report-failure.sh "$TAG"
+        run: .github/agent-screen/report-failure.sh "$TAG"

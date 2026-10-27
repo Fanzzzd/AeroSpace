@@ -21,11 +21,33 @@ func interceptTermination(_ _signal: Int32) {
 @MainActor
 func initTerminationHandler() {
     unsafe _terminationHandler = AppServerTerminationHandler()
+    // Quitting from the menu runs the handler first. Quitting any other way doesn't: by an Apple event (`osascript`,
+    // Activity Monitor, logging out) or by a signal (`kill`, `launchctl`). Without the handler, macOS moves the windows
+    // of the closet anywhere when the closet goes, an ignored monitor too
+    NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
+        MainActor.assumeIsolated { terminationHandler?.beforeTermination() }
+    }
+    // SIGINT and SIGKILL are intercepted in debug builds, see initAppBundle
+    for sig in isDebug ? [SIGTERM, SIGHUP] : [SIGTERM, SIGHUP, SIGINT] {
+        signal(sig, SIG_IGN) // Handled by the source below, on the main queue
+        let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+        source.setEventHandler {
+            MainActor.assumeIsolated { terminationHandler?.beforeTermination() }
+            exit(sig)
+        }
+        source.resume()
+        terminationSignalSources.append(source)
+    }
 }
+
+@MainActor private var terminationSignalSources: [any DispatchSourceSignal] = []
+@MainActor private var didRunBeforeTermination = false
 
 private struct AppServerTerminationHandler: TerminationHandler {
     @MainActor
     func beforeTermination() {
+        if didRunBeforeTermination { return } // The menu's Quit runs it, then the termination notification
+        didRunBeforeTermination = true
         // Make all windows fullscreen before Quit
         let ignoredMonitorWindowIds = Set(ignoredMonitorWindowsContainer.children.compactMap { ($0 as? Window)?.windowId })
         for window in MacWindow.allWindowsMap.values {
@@ -37,11 +59,13 @@ private struct AppServerTerminationHandler: TerminationHandler {
             let monitorVisibleRect = monitor.visibleRect
             let windowSize = window.lastFloatingSize ?? CGSize(width: monitorVisibleRect.width, height: monitorVisibleRect.height)
             let point = CGPoint(
-                x: (monitorVisibleRect.width - windowSize.width) / 2,
-                y: (monitorVisibleRect.height - windowSize.height) / 2,
+                x: monitorVisibleRect.minX + (monitorVisibleRect.width - windowSize.width) / 2,
+                y: monitorVisibleRect.minY + (monitorVisibleRect.height - windowSize.height) / 2,
             )
             window.macApp.setAxFrameForTermination(window.windowId, point, windowSize)
         }
+        // Last: the windows are back on screens even if the tree is too broken to save
+        saveWorldForRestart()
         if isDebug {
             let semaphore = DispatchSemaphore(value: 0)
             // Use Task.detached to avoid inheriting @MainActor.
