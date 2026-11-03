@@ -30,12 +30,18 @@ final class MacWindow: Window {
 
         // atomic synchronous section
         if let existing = allWindowsMap[windowId] { return existing }
-        let window = MacWindow(windowId, macApp, lastFloatingSize: rect?.size, parent: data.parent, adaptiveWeight: data.adaptiveWeight, index: data.index)
-        window.isPlacedByOthers = true // It opened where the app put it
+        // Popups stay popups: they aren't laid out, and a held one would be laid out as a window once its wait is over
+        let isHeld = data.parent !== macosPopupWindowsContainer && Claims.shared.holdsNewWindow(windowId, center: rect?.center)
+        let window = isHeld
+            ? MacWindow(windowId, macApp, lastFloatingSize: rect?.size, parent: ignoredMonitorWindowsContainer, adaptiveWeight: WEIGHT_DOESNT_MATTER, index: INDEX_BIND_LAST)
+            : MacWindow(windowId, macApp, lastFloatingSize: rect?.size, parent: data.parent, adaptiveWeight: data.adaptiveWeight, index: data.index)
+        window.isPlacedByOthers = !isHeld // It opened where the app put it. A held window is released already
         allWindowsMap[windowId] = window
 
         try await debugWindowsIfRecording(window, .cancellable)
-        if try await !restoreClosedWindowsCacheIfNeeded(newlyDetectedWindow: window) {
+        if isHeld {
+            ClosetLog.write("release: window \(windowId) of \(window.app.name ?? "?") as it registers, \(Claims.shared.windows?.contains(windowId) == true ? "claimed" : "unclaimed on an ignored monitor")")
+        } else if try await !restoreClosedWindowsCacheIfNeeded(newlyDetectedWindow: window) {
             await tryOnWindowDetected(window)
         }
         return window

@@ -65,7 +65,9 @@ makes the ignored displays, such as Agent Screen, tells AeroSpace which windows 
 While at least one live claim file exists:
 
 - AeroSpace leaves a claimed window alone wherever it is: it doesn't lay it out, hide it or park it, even while the
-  window is still on the user's screen. `list-windows --all` doesn't list it.
+  window is still on the user's screen. `list-windows --all` doesn't list it. That holds for a window AeroSpace sees
+  for the first time too: AeroSpace reads the claims as it registers the window and never puts a claimed one in a
+  workspace, so the layout that runs when an app comes to the front doesn't move it.
 - A window on an ignored monitor that nobody claims is the user's. AeroSpace holds it for 1 s after it appears there or
   loses its claim, without laying it out, and then lays it out on the focused workspace.
 - AeroSpace doesn't guess from positions, focus or timing.

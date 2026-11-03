@@ -40,6 +40,25 @@ final class Claims {
         return byPid.values.flatMap(\.displays).toSet()
     }
 
+    /// Whether a window AeroSpace sees for the first time goes to ``ignoredMonitorWindowsContainer`` instead of a
+    /// workspace. Registration asks right before it binds the window, with no await in between, so no layout sees a
+    /// claimed window in a workspace. The layout that an app's activation starts with runs before
+    /// ``normalizeLayoutReason`` releases claimed windows, and an accessory app's window is new to AeroSpace when its app
+    /// first comes to the front
+    func holdsNewWindow(_ windowId: UInt32, center: CGPoint?) -> Bool {
+        reload()
+        return Self.holdsNewWindow(windowId, center: center, claimed: windows, ignoredRects: ignoredMonitorRects)
+    }
+
+    /// While a live process claims, a new window is held if it's claimed, or if it opened on an ignored monitor: then
+    /// it waits there for a late claim, as in ``normalizeLayoutReason``. Without claims AeroSpace guesses later
+    static func holdsNewWindow(_ windowId: UInt32, center: CGPoint?, claimed: Set<UInt32>?, ignoredRects: [Rect]) -> Bool {
+        guard let claimed else { return false }
+        if claimed.contains(windowId) { return true }
+        guard let center else { return false }
+        return ignoredRects.contains { $0.contains(center) }
+    }
+
     func start() {
         if isUnitTest { return }
         try? FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
